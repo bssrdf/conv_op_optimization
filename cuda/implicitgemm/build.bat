@@ -1,0 +1,1 @@
+nvcc src/implgemm_5.cu main.cu -lcudnn -m64 -Iinclude  -I"C:\Program Files\NVIDIA GPU Computing Toolkit\cudnn-windows-x86_64-8.9.7.29_cuda12\include" -L"C:\Program Files\NVIDIA GPU Computing Toolkit\cudnn-windows-x86_64-8.9.7.29_cuda12\lib\x64" -arch=compute_86 -lineinfo -code=sm_86 -o implgemm
