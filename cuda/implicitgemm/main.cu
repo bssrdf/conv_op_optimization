@@ -42,21 +42,36 @@ int main(int argc, char **argv)
         input[i] = (rand() % 255) / 255.0;
     }
 
-    for (int i = 0; i < k * c * r * s; i++)
-    {
-        weight[i] = (rand() % 255) / 255.0;
+    // for (int i = 0; i < k * c * r * s; i++)
+    // {
+    //     // weight[i] = (rand() % 255) / 255.0;
+    //     weight[i] =  i / 1000.0;
+    // }
+    for(int j= 0; j < k; j++){
+    for(int C= 0; C < c; C++){
+    for (int i = 0; i < r * s; i++){
+        // weight[i] = (rand() % 255) / 255.0;
+        weight[j*r*s*c + C*r*s + i] = j * 10 + C/100.0 + i / 1000.0;
     }
+    }
+    }
+
+    // for(int j= 0; j < k; j++)
+    for(int C= 0; C < 24; C++)
+        printf("%d, %f\n", C, weight[C*r*s + 0]);
+    
 
     for (int i = 0; i < k; i++)
     {
-        bias[i] = (rand() % 255) / 255.0;
+        // bias[i] = (rand() % 255) / 255.0;
+        bias[i] = 0.f;
     }
 
-    for (int i = 0; i < n * k * outh * outw; i++)
-    {
-        output[i] = 0.0;
-        output_host[i] = 0.0;
-    }
+    // for (int i = 0; i < n * k * outh * outw; i++)
+    // {
+    //     output[i] = 0.0;
+    //     output_host[i] = 0.0;
+    // }
 
     cudaMemcpy(input_device, input, n * c * h * w * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(weight_device, weight, k * c * r * s * sizeof(float), cudaMemcpyHostToDevice);
@@ -84,6 +99,9 @@ int main(int argc, char **argv)
     param.q = q;
     param.Oh = outh;
     param.Ow = outw;
+
+    printf("launch implgemm, n:%d, c:%d, h:%d, w:%d, k:%d, r:%d, s:%d, u:%d, v:%d, p:%d, q:%d, outh:%d, outw:%d\n",
+           n, c, h, w, k, r, s, u, v, p, q, outh, outw);
     /********************************** step 2****************************/
 
 
@@ -99,7 +117,7 @@ int main(int argc, char **argv)
     cudaEventRecord(start, 0);
     float time_elapsed = 0.0;
 
-    int iternum = 10;
+    int iternum = 0;
     for (int i = 0; i < iternum; i++)
     {
         launch_implgemm(param);
@@ -118,12 +136,14 @@ int main(int argc, char **argv)
     // int error = 0;
     // for (int i = 0; i < n * k * outh * outw; i++)
     // {
+    //     // printf(" postion:%d, gpuvalue:%f, cpuvalue:%f\n", i, output_host[i], output[i]);
     //     if (abs(output_host[i] - output[i]) > getPrecision(output[i]))
     //     {
     //         printf("error, postion:%d, gpuvalue:%f, cpuvalue:%f\n", i, output_host[i], output[i]);
     //         error++;
     //         break;
     //     }
+            
     // }
     // printf("================finish,error:%d=========================\n", error);
 

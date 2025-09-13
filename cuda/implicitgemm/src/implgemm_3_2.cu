@@ -1,6 +1,10 @@
 #include <cstdint>
+#include <stdio.h>
 #include <cuda_runtime.h>
 #include "conv2d.h"
+
+#define BLOCK_SIZE 128
+
 /*
     外积实现矩阵乘，重新安排线程、smem padding、ldg与sts分离避免bank conflict
 */
@@ -81,6 +85,9 @@ __global__ void implgemm(param_t param)
         int curC = (crs + tx / 32) / (param.r * param.s);             // channel offset
         int curR = ((crs + tx / 32) % (param.r * param.s)) / param.s; // kernel r offset
         int curS = ((crs + tx / 32) % (param.r * param.s)) % param.s; // kernel s offset
+        // if(tx % 32 == 1 && bx == 0 && by == 0 && z == 0){
+        //     printf("crs: %d, warp:%d, curC:%d, curR:%d, curS:%d\n", crs, tx/32, curC, curR, curS);
+        // }
 
 #pragma unroll
         for (int i = 0; i < 4; ++i)
@@ -184,8 +191,8 @@ void launch_implgemm(param_t param)
     int outh = (h - r + 2 * p) / u + 1;
     int outw = (w - s + 2 * q) / v + 1;
 
-    int blockx = ((outh * outw + 127) / 128); // blockx  number
-    int blocky = (k + 127) / 128;             // blocky  number
+    int blockx = ((outh * outw + BLOCK_SIZE-1) / BLOCK_SIZE); // blockx  number
+    int blocky = (k + BLOCK_SIZE - 1) / BLOCK_SIZE;             // blocky  number
     int blockz = n;                           // blockz  number
     // 合并threadx与thready
     int threadx = 256; // threadx number per block

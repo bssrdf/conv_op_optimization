@@ -1,4 +1,5 @@
 #include <cstdint>
+#include <stdio.h>
 #include <cuda_runtime.h>
 #include "conv2d.h"
 /*
@@ -70,12 +71,19 @@ __global__ void implgemm(param_t param)
         if (tx % 8 < weightKOffset && by * 128 + tx / 8 * 4 + i < param.k)
         {
             weight_ldg_reg[i] = param.weight[weiOffset + tx % 8 + i * weightKOffset];
+            // if(tx == 0 && bx == 0 && by == 0 && z == 0)
+            // {
+            //     printf("weight_ldg_reg:%d,%f, %d, %d, %d\n",  i, weight_ldg_reg[i], 
+            //         weiOffset, weightKOffset,
+            //         weiOffset + tx % 8 + i * weightKOffset);
+            // }
         }
         else
         {
             weight_ldg_reg[i] = 0.0;
         }
     }
+
     int curC = (tx / 32) / (param.r * param.s);             // channel offset
     int curR = ((tx / 32) % (param.r * param.s)) / param.s; // kernel r offset
     int curS = ((tx / 32) % (param.r * param.s)) % param.s; // kernel s offset
@@ -85,6 +93,10 @@ __global__ void implgemm(param_t param)
         int curH = posh_ori[i] + curR; // input h
         int curW = posw_ori[i] + curS; // input w
         int inOffsetTmp = curC * inChannelOffset + curH * param.w + curW;
+        if(tx/32 == 1 && bx == 0 && by == 0 && z == 0)
+        {
+            printf("A: %d,  %d, %d, %d, %d\n",  tx, i, inOffsetTmp, curH, curW);
+        }
         if (curH >= 0 && curW >= 0 && curW < param.w && curH < param.h)
         {
             input_ldg_reg[i] = param.input[inOffset + inOffsetTmp];
@@ -112,6 +124,11 @@ __global__ void implgemm(param_t param)
         weight_frag[0][i] = smemweight[weight_lds_addr + i];
         weight_frag[0][i + 4] = smemweight[weight_lds_addr + i + 16];
     }
+    // if(tx == 0 && bx == 0 && by == 0 && z == 0)
+    // {
+    //     printf("weight_ldg_reg:%f,%f,%f,%f\n",  weight_frag[0][0], weight_frag[0][1], weight_frag[0][2], weight_frag[0][3]);
+    //     printf("weight_ldg_reg:%f,%f,%f,%f\n",  weight_frag[0][4], weight_frag[0][5], weight_frag[0][6], weight_frag[0][7]);
+    // }
 #pragma unroll
     for (int i = 0; i < 4; ++i)
     {
@@ -163,6 +180,17 @@ __global__ void implgemm(param_t param)
                 weight_frag[(subcrs + 1) % 2][i] = smemweight[load_flag * 132 * 8 + weight_lds_addr + (subcrs + 1) * 132 + i];
                 weight_frag[(subcrs + 1) % 2][i + 4] = smemweight[load_flag * 132 * 8 + weight_lds_addr + (subcrs + 1) * 132 + i + 16];
             }
+            // float* base_ptr = smemweight + load_flag * 132 * 8 + weight_lds_addr + (subcrs + 1) * 132;
+
+            // // first 4 values -> weight_frag[...][0..3]
+            // float4 v0 = *reinterpret_cast<const float4*>(base_ptr);
+
+            // // next 4 values (offset +16) -> weight_frag[...][4..7]
+            // float4 v1 = *reinterpret_cast<const float4*>(base_ptr + 16);
+
+            // // unpack into weight_frag
+            // *reinterpret_cast<float4*>(&weight_frag[(subcrs + 1) % 2][0]) = v0;
+            // *reinterpret_cast<float4*>(&weight_frag[(subcrs + 1) % 2][4]) = v1;
 #pragma unroll
             for (int i = 0; i < 4; ++i)
             {
@@ -276,10 +304,12 @@ void launch_implgemm(param_t param)
     unsigned int q = param.q;
 
     int outh = (h - r + 2 * p) / u + 1;
-    int outw = (w - s + 2 * q) / v + 1;
+    int outw = (w - s + 2 * q) / v + 1;    
 
     int blockx = ((outh * outw + 127) / 128); // blockx  number
     int blocky = (k + 127) / 128;             // blocky  number
+    // int blockx = ((outh * outw + 63) / 64); // blockx  number
+    // int blocky = (k + 63) / 64;             // blocky  number
     int blockz = n;                           // blockz  number
     // 合并threadx与thready
     int threadx = 256; // threadx number per block
