@@ -17,5 +17,7 @@ typedef struct
     unsigned int      q;                              //卷积在宽方向上的补边    
     unsigned int      Oh;                             //卷积结果高             
     unsigned int      Ow;                             //卷积结果宽 
+    bool              nchw;
 }param_t;
-void launch_implgemm(param_t param);
+// void launch_implgemm(param_t param);
+cudaError_t launch_implgemm(param_t param);

@@ -1,8 +1,20 @@
 #include <stdio.h>
+#include <assert.h>
 #include <cuda_runtime.h>
 // #include <cuda_ext.h>
 #include "verify.h"
+
 #include "conv2d.h"
+
+#define OPENCNN_CALL(ans) { gpuAssert((ans), __FILE__, __LINE__); }
+inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
+{
+   if (code != cudaSuccess)
+   {
+      fprintf(stderr,"Error occurred: %s %s %d\n", cudaGetErrorString(code), file, line);
+      if (abort) exit(code);  
+   }
+}
 
 int main(int argc, char **argv)
 {
@@ -17,6 +29,7 @@ int main(int argc, char **argv)
     unsigned int v = atoi(argv[9]);
     unsigned int p = atoi(argv[10]);
     unsigned int q = atoi(argv[11]);
+    unsigned int nchw = atoi(argv[12]);
 
     int outh = (h - r + 2 * p) / u + 1;
     int outw = (w - s + 2 * q) / v + 1;
@@ -57,8 +70,8 @@ int main(int argc, char **argv)
     }
 
     // for(int j= 0; j < k; j++)
-    for(int C= 0; C < 24; C++)
-        printf("%d, %f\n", C, weight[C*r*s + 0]);
+    // for(int C= 0; C < 24; C++)
+    //     printf("%d, %f\n", C, weight[C*r*s + 0]);
     
 
     for (int i = 0; i < k; i++)
@@ -83,6 +96,9 @@ int main(int argc, char **argv)
     param_t param;
 
     param.input = input_device;
+    uintptr_t base = reinterpret_cast<uintptr_t>(param.input);
+    printf("param.input base = %p  (mod16 = %zu)\n", (void*)base, base % 16);
+    assert((base % 16) == 0 && "param.input base is not 16-byte aligned");
     param.weight = weight_device;
     param.bias = bias_device;
     param.output = output_device;
@@ -99,6 +115,7 @@ int main(int argc, char **argv)
     param.q = q;
     param.Oh = outh;
     param.Ow = outw;
+    param.nchw = (nchw == 1) ? true : false;
 
     printf("launch implgemm, n:%d, c:%d, h:%d, w:%d, k:%d, r:%d, s:%d, u:%d, v:%d, p:%d, q:%d, outh:%d, outw:%d\n",
            n, c, h, w, k, r, s, u, v, p, q, outh, outw);
@@ -106,7 +123,7 @@ int main(int argc, char **argv)
 
 
     /*******************************warm up and get result************************************/
-    launch_implgemm(param);
+    OPENCNN_CALL(launch_implgemm(param));
 
     cudaMemcpy(output_host, output_device, n * k * outh * outw * sizeof(float), cudaMemcpyDeviceToHost);
 
@@ -117,10 +134,10 @@ int main(int argc, char **argv)
     cudaEventRecord(start, 0);
     float time_elapsed = 0.0;
 
-    int iternum = 0;
+    int iternum = 20;
     for (int i = 0; i < iternum; i++)
     {
-        launch_implgemm(param);
+        OPENCNN_CALL(launch_implgemm(param));
     }
     cudaEventRecord(stop, 0);
 
@@ -131,7 +148,10 @@ int main(int argc, char **argv)
     cudaEventDestroy(stop);
 
     // printf("===================start verfiy===================\n");
-    // direct_conv2dcpu(input, weight, bias, output, n, c, h, w, k, r, s, u, v, p, q);
+    // if(param.nchw)
+        // direct_conv2dcpu(input, weight, bias, output, n, c, h, w, k, r, s, u, v, p, q);
+    // else
+        // direct_conv2dcpu_nhwc(input, weight, bias, output, n, c, h, w, k, r, s, u, v, p, q);
 
     // int error = 0;
     // for (int i = 0; i < n * k * outh * outw; i++)

@@ -1,10 +1,13 @@
 #include <cstdint>
+#include <assert.h>
 #include <stdio.h>
 #include <cuda_runtime.h>
 #include "conv2d.h"
 /*
     线程通过共享内存交换数据，然后使用高效的条带访问模式协作访问全局内存，加入 bias Epilogue
 */
+
+
 __global__ void implgemm(param_t param)
 {
     __shared__ __align__(16 * 1024) char smem[24 * 1024];
@@ -31,15 +34,14 @@ __global__ void implgemm(param_t param)
     float weight_ldg_reg[4];
     float input_ldg_reg[4];
     // 当前线程处理的数据点在oh、ow上的坐标
-    int posh_ori[4];
-    int posw_ori[4];
-#pragma unroll
-    for (int i = 0; i < 4; ++i)
-    {
-        posh_ori[i] = ((bx * 128 + tx % 32 + i * 32) / param.Ow) * param.u - param.p;
-        posw_ori[i] = ((bx * 128 + tx % 32 + i * 32) % param.Ow) * param.v - param.q;
-    }
-
+    int posh_ori[2];
+    int posw_ori[2];    
+// #pragma unroll    
+    posh_ori[0] = ((bx * 128 + (tx % 32) * 4) / param.Ow) * param.u - param.p;
+    posh_ori[1] = ((bx * 128 + (tx % 32) * 4 + 4 - 1) / param.Ow) * param.u - param.p;
+    posw_ori[0] = ((bx * 128 + (tx % 32) * 4 ) % param.Ow) * param.v - param.q;
+    posw_ori[1] = ((bx * 128 + (tx % 32) * 4 + 4 - 1) % param.Ow) * param.v - param.q;
+    
     int inOffset = z * param.c * param.h * param.w;
     int weiOffset = (by * 128 + tx / 8 * 4) * param.c * param.r * param.s;
     int inChannelOffset = param.h * param.w;
@@ -87,24 +89,39 @@ __global__ void implgemm(param_t param)
     int curC = (tx / 32) / (param.r * param.s);             // channel offset
     int curR = ((tx / 32) % (param.r * param.s)) / param.s; // kernel r offset
     int curS = ((tx / 32) % (param.r * param.s)) % param.s; // kernel s offset
+    if (posh_ori[0] + curR < 0 || posh_ori[0] + curR >= param.h || posw_ori[0] + curS < 0 || posw_ori[0] + curS >= param.w ||
+        posh_ori[1] + curR < 0 || posh_ori[1] + curR >= param.h || posw_ori[1] + curS < 0 || posw_ori[1] + curS >= param.w){
 #pragma unroll
-    for (int i = 0; i < 4; ++i)
-    {
-        int curH = posh_ori[i] + curR; // input h
-        int curW = posw_ori[i] + curS; // input w
+        for (int i = 0; i < 4; ++i)
+        {
+            int curH = ((bx * 128 + (tx % 32) * 4 + i) / param.Ow) * param.u - param.p + curR; // input h
+            int curW = ((bx * 128 + (tx % 32) * 4 + i) % param.Ow) * param.v - param.q + curS; // input w
+            int inOffsetTmp = curC * inChannelOffset + curH * param.w + curW;
+            // if(tx/32 == 1 && bx == 0 && by == 0 && z == 0)
+            // {
+            //     printf("A: %d,  %d, %d, %d, %d\n",  tx, i, inOffsetTmp, curH, curW);
+            // }
+            if (curH >= 0 && curW >= 0 && curW < param.w && curH < param.h)
+            {
+                input_ldg_reg[i] = param.input[inOffset + inOffsetTmp];
+            }
+            else
+            {
+                input_ldg_reg[i] = 0.0;
+            }
+        }
+    }else{
+        int curH = posh_ori[0] + curR;
+        int curW = posw_ori[0] + curS;
+
         int inOffsetTmp = curC * inChannelOffset + curH * param.w + curW;
-        // if(tx/32 == 1 && bx == 0 && by == 0 && z == 0)
-        // {
-        //     printf("A: %d,  %d, %d, %d, %d\n",  tx, i, inOffsetTmp, curH, curW);
-        // }
-        if (curH >= 0 && curW >= 0 && curW < param.w && curH < param.h)
-        {
-            input_ldg_reg[i] = param.input[inOffset + inOffsetTmp];
-        }
-        else
-        {
-            input_ldg_reg[i] = 0.0;
-        }
+        float *base_ptr = &(param.input[inOffset + inOffsetTmp]);
+        assert(((uintptr_t)base_ptr % alignof(float4)) == 0);
+        float4 tmp = reinterpret_cast<float4 *>(&param.input[inOffset + inOffsetTmp])[0];
+        input_ldg_reg[0] = tmp.x; 
+        input_ldg_reg[1] = tmp.y; 
+        input_ldg_reg[2] = tmp.z; 
+        input_ldg_reg[3] = tmp.w; 
     }
     // sts
     for (int i = 0; i < 4; ++i)
@@ -155,21 +172,38 @@ __global__ void implgemm(param_t param)
         curR = ((crs + 8 + tx / 32) % (param.r * param.s)) / param.s; // kernel r offset
         curS = ((crs + 8 + tx / 32) % (param.r * param.s)) % param.s; // kernel s offset
 
+        if (posh_ori[0] + curR < 0 || posh_ori[0] + curR >= param.h || posw_ori[0] + curS < 0 || posw_ori[0] + curS >= param.w ||
+        posh_ori[1] + curR < 0 || posh_ori[1] + curR >= param.h || posw_ori[1] + curS < 0 || posw_ori[1] + curS >= param.w){
 #pragma unroll
-        for (int i = 0; i < 4; ++i)
-        {
-            int curH = posh_ori[i] + curR; // input h
-            int curW = posw_ori[i] + curS; // input w
+            for (int i = 0; i < 4; ++i)
+            {
+                int curH = ((bx * 128 + (tx % 32) * 4 + i) / param.Ow) * param.u - param.p + curR; // input h
+                int curW = ((bx * 128 + (tx % 32) * 4 + i) % param.Ow) * param.v - param.q + curS; // input w
+                int inOffsetTmp = curC * inChannelOffset + curH * param.w + curW;
+                // if(tx/32 == 1 && bx == 0 && by == 0 && z == 0)
+                // {
+                //     printf("A: %d,  %d, %d, %d, %d\n",  tx, i, inOffsetTmp, curH, curW);
+                // }
+                if (curH >= 0 && curW >= 0 && curW < param.w && curH < param.h)
+                {
+                    input_ldg_reg[i] = param.input[inOffset + inOffsetTmp];
+                }
+                else
+                {
+                    input_ldg_reg[i] = 0.0;
+                }
+            }
+        }else{
+            int curH = posh_ori[0] + curR;
+            int curW = posw_ori[0] + curS;
             int inOffsetTmp = curC * inChannelOffset + curH * param.w + curW;
-            if (curH >= 0 && curW >= 0 && curW < param.w && curH < param.h)
-            {
-                input_ldg_reg[i] = param.input[inOffset + inOffsetTmp];
-            }
-            else
-            {
-                input_ldg_reg[i] = 0.0;
-            }
+            float4 tmp = reinterpret_cast<float4 *>(&param.input[inOffset + inOffsetTmp])[0];
+            input_ldg_reg[0] = tmp.x; 
+            input_ldg_reg[1] = tmp.y; 
+            input_ldg_reg[2] = tmp.z; 
+            input_ldg_reg[3] = tmp.w; 
         }
+
         int load_flag = write_flag ^ 1;
 #pragma unroll
         for (int subcrs = 0; subcrs < 8 - 1; ++subcrs)
@@ -289,7 +323,7 @@ __global__ void implgemm(param_t param)
         }
     }
 }
-void launch_implgemm(param_t param)
+cudaError_t launch_implgemm(param_t param)
 {
     unsigned int n = param.n;
     unsigned int c = param.c;
@@ -318,4 +352,5 @@ void launch_implgemm(param_t param)
     dim3 block(threadx, thready, threadz);
     dim3 grid(blockx, blocky, blockz);
     implgemm<<<grid, block>>>(param);
+    return cudaGetLastError();
 }
