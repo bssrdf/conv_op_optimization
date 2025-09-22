@@ -54,7 +54,7 @@ __global__ void implgemm(param_t param)
     int inOffset = z * param.c * param.h * param.w;
     int weiOffset = (by * 128 + tx / 8 * 4) * param.c * param.r * param.s;
     int inChannelOffset = param.c * param.w;
-    int weightChannelOffset = param.r * param.s;
+    // int weightChannelOffset = param.r * param.s;
     int weightKOffset = param.c * param.r * param.s;
 
     // sts addr
