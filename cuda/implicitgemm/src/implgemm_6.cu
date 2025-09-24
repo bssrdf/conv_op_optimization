@@ -45,8 +45,9 @@ __global__ void implgemm(param_t param)
     int weightKOffset = param.c * param.r * param.s;
 
     // sts addr
-    int weight_sts_addr = (tx % 8) * 132 +
-                          (tx / 8) * 4;
+    // int weight_sts_addr = (tx % 8) * 132 +
+    //                       (tx / 8) * 4;
+    int weight_sts_addr = tx / 2 + (tx % 2) * 132 * 4;
     int input_sts_addr = tx / 2 + (tx % 2) * 128 * 4;
 
     int write_flag = 1;
@@ -63,23 +64,18 @@ __global__ void implgemm(param_t param)
         }
     }
 // ldg
-#pragma unroll
-    for (int i = 0; i < 4; ++i)
-    {
-        if (tx % 8 < weightKOffset && by * 128 + tx / 8 * 4 + i < param.k)
-        {
-            weight_ldg_reg[i] = param.weight[weiOffset + tx % 8 + i * weightKOffset];
-            // if(tx == 0 && bx == 0 && by == 0 && z == 0)
-            // {
-            //     printf("weight_ldg_reg:%d,%f, %d, %d, %d\n",  i, weight_ldg_reg[i], 
-            //         weiOffset, weightKOffset,
-            //         weiOffset + tx % 8 + i * weightKOffset);
-            // }
-        }
-        else
-        {
+
+    if (by * 128 + tx / 2  < param.k){
+        // int inOffsetTmp = curH * inChannelOffset + curW * param.c + curC;
+        float4 tmp = reinterpret_cast<float4 *>(&param.weight[by * 128 + (tx / 2) * weightKOffset + tx % 2 * 4])[0];
+        weight_ldg_reg[0] = tmp.x;
+        weight_ldg_reg[1] = tmp.y;
+        weight_ldg_reg[2] = tmp.z;
+        weight_ldg_reg[3] = tmp.w;
+    } else {
+ #pragma unroll
+        for (int i = 0; i < 4; ++i)
             weight_ldg_reg[i] = 0.0;
-        }
     }
 
     // int curC = (tx / 32) / (param.r * param.s);             // channel offset
@@ -108,7 +104,7 @@ __global__ void implgemm(param_t param)
     // sts
     for (int i = 0; i < 4; ++i)
     {
-        smemweight[weight_sts_addr + i] = weight_ldg_reg[i];
+        smemweight[weight_sts_addr + i*132] = weight_ldg_reg[i];
     }
     for (int i = 0; i < 4; ++i)
     {
@@ -137,20 +133,17 @@ __global__ void implgemm(param_t param)
     for (int crs = 0; crs < param.r * param.s * param.c; crs += 8)
     {
         // ldg
-        int weiOffsetTmp = crs + 8 + tx % 8;
-#pragma unroll
-        for (int i = 0; i < 4; ++i)
-        {
-            if (weiOffsetTmp < weightKOffset && by * 128 + tx / 8 * 4 + i < param.k)
-            {
-                weight_ldg_reg[i] = param.weight[weiOffset + weiOffsetTmp + i * weightKOffset];
-            }
-            else
-            {
+        if (by * 128 + tx / 2 < param.k){
+            float4 tmp = reinterpret_cast<float4 *>(&param.weight[by * 128 + tx / 2 * weightKOffset + tx % 2 * 4 + crs + 8])[0];
+            weight_ldg_reg[0] = tmp.x;
+            weight_ldg_reg[1] = tmp.y;
+            weight_ldg_reg[2] = tmp.z;
+            weight_ldg_reg[3] = tmp.w;
+        } else {
+ #pragma unroll
+            for (int i = 0; i < 4; ++i)
                 weight_ldg_reg[i] = 0.0;
-            }
         }
-        
         curR = (crs + 8 + tx % 2 * 4) / (param.s * param.c);             // channel offset
         curS = ((crs + 8 + tx % 2 * 4) % (param.s * param.c)) / param.c; // kernel r offset
         curC = ((crs + 8 + tx % 2 * 4) % (param.s * param.c)) % param.c; // kernel s offset
@@ -211,7 +204,7 @@ __global__ void implgemm(param_t param)
         // sts
         for (int i = 0; i < 4; ++i)
         {
-            smemweight[write_flag * 132 * 8 + weight_sts_addr + i] = weight_ldg_reg[i];
+            smemweight[write_flag * 132 * 8 + weight_sts_addr + i * 132] = weight_ldg_reg[i];
         }
         for (int i = 0; i < 4; ++i)
         {

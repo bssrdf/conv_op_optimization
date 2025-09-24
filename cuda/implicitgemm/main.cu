@@ -96,7 +96,7 @@ int main(int argc, char **argv)
     param_t param;
 
     param.input = input_device;
-    uintptr_t base = reinterpret_cast<uintptr_t>(param.input);
+    uintptr_t base = reinterpret_cast<uintptr_t>(param.weight);
     printf("param.input base = %p  (mod16 = %zu)\n", (void*)base, base % 16);
     assert((base % 16) == 0 && "param.input base is not 16-byte aligned");
     param.weight = weight_device;
