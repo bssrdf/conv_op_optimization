@@ -70,7 +70,7 @@ static __global__ void reduce_rows_f32(const float * __restrict__ x, float * __r
 }
 
 
-__global__ void implgemm(param_t param, const int ks, float *out)
+__global__ void implgemm(param_t param, const int ks)
 {
     __shared__ __align__(16 * 1024) char smem[24 * 1024];
     float *smemweight = reinterpret_cast<float *>(smem);
@@ -79,6 +79,7 @@ __global__ void implgemm(param_t param, const int ks, float *out)
     int tx = threadIdx.x;
     int bx = blockIdx.x;
     int by = blockIdx.y;
+    int bz = gridDim.z;
 
     // Warp tile
     const int lane_id = threadIdx.x % 32;
@@ -93,14 +94,19 @@ __global__ void implgemm(param_t param, const int ks, float *out)
     int y = by * 128 + weight_lds_addr;
     int z = blockIdx.z;
 
+    const unsigned int start_k = z * ks;
+
     float weight_ldg_reg[4];
     float input_ldg_reg[4];
     // 当前线程处理的数据点在oh、ow上的坐标
-    int posh_ori = ((bx * 128 + tx / 2 ) / param.Ow) * param.u - param.p;
-    int posw_ori = ((bx * 128 + tx / 2 ) % param.Ow) * param.v - param.q;
+    const unsigned int PQ = param.Oh * param.Ow;
+    const unsigned int n = (bx * 128 + tx / 2 ) / PQ;
+    const unsigned int npq_res = (bx * 128 + tx / 2 ) % PQ;
+    int posh_ori = (npq_res / param.Ow) * param.u - param.p;
+    int posw_ori = (npq_res % param.Ow) * param.v - param.q;
 
     
-    int inOffset = z * param.c * param.h * param.w;
+    int inOffset = n * param.c * param.h * param.w;
     int weiOffset = (by * 128 + tx / 8 * 4) * param.c * param.r * param.s;
     int inChannelOffset = param.c * param.w;
     // int weightChannelOffset = param.r * param.s;
@@ -130,7 +136,7 @@ __global__ void implgemm(param_t param, const int ks, float *out)
     {
         if (tx % 8 < weightKOffset && by * 128 + tx / 8 * 4 + i < param.k)
         {
-            weight_ldg_reg[i] = param.weight[weiOffset + tx % 8 + i * weightKOffset];
+            weight_ldg_reg[i] = param.weight[weiOffset + start_k + tx % 8 + i * weightKOffset];
             // if(tx == 0 && bx == 0 && by == 0 && z == 0)
             // {
             //     printf("weight_ldg_reg:%d,%f, %d, %d, %d\n",  i, weight_ldg_reg[i], 
@@ -148,9 +154,9 @@ __global__ void implgemm(param_t param, const int ks, float *out)
     // int curR = ((tx / 32) % (param.r * param.s)) / param.s; // kernel r offset
     // int curS = ((tx / 32) % (param.r * param.s)) % param.s; // kernel s offset
 
-    int curR = (tx % 2) * 4 / (param.s * param.c);             // channel offset
-    int curS = ((tx % 2) * 4 % (param.s * param.c)) / param.c; // kernel r offset
-    int curC = ((tx % 2) * 4 % (param.s * param.c)) % param.c; // kernel s offset
+    int curR = (start_k + (tx % 2) * 4) / (param.s * param.c);             // channel offset
+    int curS = ((start_k + (tx % 2) * 4) % (param.s * param.c)) / param.c; // kernel r offset
+    int curC = ((start_k + (tx % 2) * 4) % (param.s * param.c)) % param.c; // kernel s offset
 
     int curH = posh_ori + curR; // input h
     int curW = posw_ori + curS; // input w
@@ -197,7 +203,7 @@ __global__ void implgemm(param_t param, const int ks, float *out)
         input_frag[0][i + 4] = smeminput[input_lds_addr + i + 32];
     }
     // for (int crs = 0; crs < param.r * param.s * param.c; crs += 8)
-    for (int crs = 0; crs < ks; crs += 8)
+    for (int crs = start_k; crs < start_k + ks; crs += 8)
     {
         // ldg
         int weiOffsetTmp = crs + 8 + tx % 8;
@@ -345,9 +351,9 @@ __global__ void implgemm(param_t param, const int ks, float *out)
 #pragma unroll
             for (int subk = 0; subk < 16; ++subk)
             {
-                int outOffset = z * param.k * param.Oh * param.Ow + (m_idx + i * 16 + subk) * param.Oh * param.Ow + n_idx + j * 32;
+                int outOffset = n * param.k * param.Oh * param.Ow * bz + (m_idx + i * 16 + subk) * bz * param.Oh * param.Ow + (n_idx + j * 32) * bz ;
                 if ((m_idx + i * 16 + subk) < param.k && (n_idx + j * 32) < param.Oh * param.Ow)
-                    out[outOffset] = smemoutput[output_lds_addr + subk * 32];
+                    param.interm[outOffset + z] = smemoutput[output_lds_addr + subk * 32];
             }
         }
     }
@@ -369,26 +375,27 @@ cudaError_t launch_implgemm(param_t param)
     int outh = (h - r + 2 * p) / u + 1;
     int outw = (w - s + 2 * q) / v + 1;    
 
-    const int ksplit = 16;
+    const int ksplit = param.ksplit;
     assert((c*r*s) % ksplit == 0);
     const int splitk = (c*r*s) / ksplit;
 
-    float* interm;
-    cudaMalloc((void **)&interm, n * k * splitk * outh * outw * sizeof(float));
+    
+    const unsigned int nrows = n * k * outh * outw;
 
-    int blockx = ((outh * outw + 127) / 128); // blockx  number
+    int blockx = ((n * outh * outw + 127) / 128); // blockx  number
     int blocky = (k + 127) / 128;             // blocky  number
     // int blockx = ((outh * outw + 63) / 64); // blockx  number
     // int blocky = (k + 63) / 64;             // blocky  number
-    int blockz = n;                           // blockz  number
+    int blockz = ksplit;                           // blockz  number
     // 合并threadx与thready
     int threadx = 256; // threadx number per block
     int thready = 1;   // thready number per block
     int threadz = 1;   // threadz number per block
     dim3 block(threadx, thready, threadz);
     dim3 grid(blockx, blocky, blockz);
-    implgemm<<<grid, block>>>(param, splitk, interm);
-    reduce_rows_f32<false>(interm, param.output, splitk);
-    cudaFree(interm);
+    implgemm<<<grid, block>>>(param, splitk);
+    const dim3 block_nums(nrows, 1, 1);
+    const dim3 block_dims(512, 1, 1);
+    reduce_rows_f32<false><<<block_nums, block_dims>>>(param.interm, param.output, ksplit);
     return cudaGetLastError();
 }

@@ -30,7 +30,10 @@ int main(int argc, char **argv)
     unsigned int p = atoi(argv[10]);
     unsigned int q = atoi(argv[11]);
     unsigned int nchw = atoi(argv[12]);
+    unsigned int k_split = atoi(argv[13]);
 
+
+    const int ksplit = 32;
     int outh = (h - r + 2 * p) / u + 1;
     int outw = (w - s + 2 * q) / v + 1;
     double M = k;
@@ -49,6 +52,10 @@ int main(int argc, char **argv)
     cudaMalloc((void **)&weight_device, k * c * r * s * sizeof(float));
     cudaMalloc((void **)&bias_device, k * sizeof(float));
     cudaMalloc((void **)&output_device, n * k * outh * outw * sizeof(float));
+    float* interm_device = NULL;
+    if(k_split)
+        cudaMalloc((void **)&interm_device, n * k * k_split * outh * outw * sizeof(float));
+
 
     for (int i = 0; i < n * c * h * w; i++)
     {
@@ -102,6 +109,7 @@ int main(int argc, char **argv)
     param.weight = weight_device;
     param.bias = bias_device;
     param.output = output_device;
+    param.interm = interm_device;
     param.n = n;
     param.c = c;
     param.h = h;
@@ -113,6 +121,7 @@ int main(int argc, char **argv)
     param.v = v;
     param.p = p;
     param.q = q;
+    param.ksplit = k_split;
     param.Oh = outh;
     param.Ow = outw;
     param.nchw = (nchw == 1) ? true : false;
@@ -156,7 +165,8 @@ int main(int argc, char **argv)
     // int error = 0;
     // for (int i = 0; i < n * k * outh * outw; i++)
     // {
-    //     // printf(" postion:%d, gpuvalue:%f, cpuvalue:%f\n", i, output_host[i], output[i]);
+    //     if(i < 100)
+    //         // printf(" postion:%d, gpuvalue:%f, cpuvalue:%f\n", i, output_host[i], output[i]);
     //     if (abs(output_host[i] - output[i]) > getPrecision(output[i]))
     //     {
     //         printf("error, postion:%d, gpuvalue:%f, cpuvalue:%f\n", i, output_host[i], output[i]);
@@ -176,6 +186,8 @@ int main(int argc, char **argv)
     cudaFree(input_device);
     cudaFree(weight_device);
     cudaFree(output_device);
+    if(k_split)
+        cudaFree(interm_device);
 
     free(input);
     free(weight);

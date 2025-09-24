@@ -4,6 +4,7 @@ typedef struct
     float*   weight;                                  //权值数据地址
     float*   bias;                                    //偏置值数据地址
     float*   output;                                  //输出数据地址
+    float*   interm;                                  //输出数据地址
     unsigned int      n;                              //batch szie              
     unsigned int      c;                              //channel number          
     unsigned int      h;                              //数据高                  
@@ -18,6 +19,7 @@ typedef struct
     unsigned int      Oh;                             //卷积结果高             
     unsigned int      Ow;                             //卷积结果宽 
     bool              nchw;
+    unsigned int    ksplit;
 }param_t;
 // void launch_implgemm(param_t param);
 cudaError_t launch_implgemm(param_t param);
