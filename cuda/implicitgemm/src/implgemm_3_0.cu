@@ -105,7 +105,8 @@ __global__ void implgemm(param_t param)
         }
     }
 }
-void launch_implgemm(param_t param)
+
+cudaError_t launch_implgemm(param_t param)
 {
     unsigned int n = param.n;
     unsigned int c = param.c;
@@ -132,4 +133,5 @@ void launch_implgemm(param_t param)
     dim3 block(threadx, thready, threadz);
     dim3 grid(blockx, blocky, blockz);
     implgemm<<<grid, block>>>(param);
+    return cudaGetLastError();
 }

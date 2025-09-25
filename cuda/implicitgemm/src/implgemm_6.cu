@@ -34,8 +34,10 @@ __global__ void implgemm(param_t param)
     float weight_ldg_reg[4];
     float input_ldg_reg[4];
     // 当前线程处理的数据点在oh、ow上的坐标
-    int posh_ori = ((bx * 128 + tx / 2 ) / param.Ow) * param.u - param.p;
-    int posw_ori = ((bx * 128 + tx / 2 ) % param.Ow) * param.v - param.q;
+    // int posh_ori = ((bx * 128 + tx / 2 ) / param.Ow) * param.u - param.p;
+    // int posw_ori = ((bx * 128 + tx / 2 ) % param.Ow) * param.v - param.q;
+    int posh_ori = fastdiv(bx * 128 + tx / 2, param.OW_fastdiv) * param.u - param.p;
+    int posw_ori = fastmodulo(bx * 128 + tx / 2, param.OW_fastdiv) * param.v - param.q;
 
     
     int inOffset = z * param.c * param.h * param.w;
@@ -82,9 +84,12 @@ __global__ void implgemm(param_t param)
     // int curR = ((tx / 32) % (param.r * param.s)) / param.s; // kernel r offset
     // int curS = ((tx / 32) % (param.r * param.s)) % param.s; // kernel s offset
 
-    int curR = (tx % 2) * 4 / (param.s * param.c);             // channel offset
-    int curS = ((tx % 2) * 4 % (param.s * param.c)) / param.c; // kernel r offset
-    int curC = ((tx % 2) * 4 % (param.s * param.c)) % param.c; // kernel s offset
+    // int curR = (tx % 2) * 4 / (param.s * param.c);             // channel offset
+    // int curS = ((tx % 2) * 4 % (param.s * param.c)) / param.c; // kernel r offset
+    // int curC = ((tx % 2) * 4 % (param.s * param.c)) % param.c; // kernel s offset
+    int curR = fastdiv((tx % 2) * 4,  param.SC_fastdiv);             // channel offset
+    int curS = fastdiv(fastmodulo((tx % 2) * 4, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
+    int curC = fastmodulo(fastmodulo((tx % 2) * 4, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
 
     int curH = posh_ori + curR; // input h
     int curW = posw_ori + curS; // input w
@@ -144,20 +149,24 @@ __global__ void implgemm(param_t param)
             for (int i = 0; i < 4; ++i)
                 weight_ldg_reg[i] = 0.0;
         }
-        curR = (crs + 8 + tx % 2 * 4) / (param.s * param.c);             // channel offset
-        curS = ((crs + 8 + tx % 2 * 4) % (param.s * param.c)) / param.c; // kernel r offset
-        curC = ((crs + 8 + tx % 2 * 4) % (param.s * param.c)) % param.c; // kernel s offset
+        // curR = (crs + 8 + tx % 2 * 4) / (param.s * param.c);             // channel offset
+        // curS = ((crs + 8 + tx % 2 * 4) % (param.s * param.c)) / param.c; // kernel r offset
+        // curC = ((crs + 8 + tx % 2 * 4) % (param.s * param.c)) % param.c; // kernel s offset
+        curR = fastdiv(crs + 8 + (tx % 2) * 4,  param.SC_fastdiv);             // channel offset
+        curS = fastdiv(fastmodulo(crs + 8 + (tx % 2) * 4, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
+        curC = fastmodulo(fastmodulo(crs + 8 + (tx % 2) * 4, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
 
         int curH = posh_ori + curR; // input h
         int curW = posw_ori + curS; // input w
         if (curH >= 0 && curW >= 0 && curW < param.w && curH < param.h){
             int inOffsetTmp = curH * inChannelOffset + curW * param.c + curC;
-            float4 tmp = reinterpret_cast<float4 *>(&param.input[inOffset + inOffsetTmp])[0];
-            input_ldg_reg[0] = tmp.x;
-            input_ldg_reg[1] = tmp.y;
-            input_ldg_reg[2] = tmp.z;
-            input_ldg_reg[3] = tmp.w;
-        } else {
+
+            // float4 tmp = reinterpret_cast<float4 *>(&param.input[inOffset + inOffsetTmp])[0];
+            // input_ldg_reg[0] = tmp.x;
+            // input_ldg_reg[1] = tmp.y;
+            // input_ldg_reg[2] = tmp.z;
+            // input_ldg_reg[3] = tmp.w;
+            reinterpret_cast<float4 *>(&input_ldg_reg[0])[0] = reinterpret_cast<float4 *>(&param.input[inOffset + inOffsetTmp])[0];        } else {
 #pragma unroll
             for (int i = 0; i < 4; ++i)
                 input_ldg_reg[i] = 0.0;

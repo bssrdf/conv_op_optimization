@@ -30,6 +30,7 @@ int main(int argc, char **argv)
     unsigned int p = atoi(argv[10]);
     unsigned int q = atoi(argv[11]);
     unsigned int nchw = atoi(argv[12]);
+    unsigned int do_verify = atoi(argv[13]);
 
     int outh = (h - r + 2 * p) / u + 1;
     int outw = (w - s + 2 * q) / v + 1;
@@ -55,19 +56,18 @@ int main(int argc, char **argv)
         input[i] = (rand() % 255) / 255.0;
     }
 
-    // for (int i = 0; i < k * c * r * s; i++)
-    // {
+    for (int i = 0; i < k * c * r * s; i++)
+    {
+        weight[i] = (rand() % 255) / 255.0;
+    }
+    // for(int j= 0; j < k; j++){
+    // for(int C= 0; C < c; C++){
+    // for (int i = 0; i < r * s; i++){
     //     // weight[i] = (rand() % 255) / 255.0;
-    //     weight[i] =  i / 1000.0;
+    //     weight[j*r*s*c + C*r*s + i] = j * 10 + C/100.0 + i / 1000.0;
     // }
-    for(int j= 0; j < k; j++){
-    for(int C= 0; C < c; C++){
-    for (int i = 0; i < r * s; i++){
-        // weight[i] = (rand() % 255) / 255.0;
-        weight[j*r*s*c + C*r*s + i] = j * 10 + C/100.0 + i / 1000.0;
-    }
-    }
-    }
+    // }
+    // }
 
     // for(int j= 0; j < k; j++)
     // for(int C= 0; C < 24; C++)
@@ -117,6 +117,10 @@ int main(int argc, char **argv)
     param.Ow = outw;
     param.nchw = (nchw == 1) ? true : false;
 
+    param.SC_fastdiv = init_fastdiv_values(s*c);    
+    param.OW_fastdiv = init_fastdiv_values(outw);
+    param.C_fastdiv = init_fastdiv_values(c);
+
     printf("launch implgemm, n:%d, c:%d, h:%d, w:%d, k:%d, r:%d, s:%d, u:%d, v:%d, p:%d, q:%d, outh:%d, outw:%d\n",
            n, c, h, w, k, r, s, u, v, p, q, outh, outw);
     /********************************** step 2****************************/
@@ -147,25 +151,27 @@ int main(int argc, char **argv)
     cudaEventDestroy(start);
     cudaEventDestroy(stop);
 
-    // printf("===================start verfiy===================\n");
-    // if(param.nchw)
-    //     direct_conv2dcpu(input, weight, bias, output, n, c, h, w, k, r, s, u, v, p, q);
-    // else
-    //     direct_conv2dcpu_nhwc(input, weight, bias, output, n, c, h, w, k, r, s, u, v, p, q);
+    if(do_verify){
+        printf("===================start verfiy===================\n");
+        if(param.nchw)
+            direct_conv2dcpu(input, weight, bias, output, n, c, h, w, k, r, s, u, v, p, q);
+        else
+            direct_conv2dcpu_nhwc(input, weight, bias, output, n, c, h, w, k, r, s, u, v, p, q);
 
-    // int error = 0;
-    // for (int i = 0; i < n * k * outh * outw; i++)
-    // {
-    //     // printf(" postion:%d, gpuvalue:%f, cpuvalue:%f\n", i, output_host[i], output[i]);
-    //     if (abs(output_host[i] - output[i]) > getPrecision(output[i]))
-    //     {
-    //         printf("error, postion:%d, gpuvalue:%f, cpuvalue:%f\n", i, output_host[i], output[i]);
-    //         error++;
-    //         break;
-    //     }
-            
-    // }
-    // printf("================finish,error:%d=========================\n", error);
+        int error = 0;
+        for (int i = 0; i < n * k * outh * outw; i++)
+        {
+            // printf(" postion:%d, gpuvalue:%f, cpuvalue:%f\n", i, output_host[i], output[i]);
+            if (abs(output_host[i] - output[i]) > getPrecision(output[i]))
+            {
+                printf("error, postion:%d, gpuvalue:%f, cpuvalue:%f\n", i, output_host[i], output[i]);
+                error++;
+                break;
+            }
+                
+        }
+        printf("================finish,error:%d=========================\n", error);
+    }
 
     float timePerConv = time_elapsed / iternum;
     double gflops = flopsPerConv / (timePerConv / 1000.0f);
