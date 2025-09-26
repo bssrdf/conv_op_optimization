@@ -70,6 +70,21 @@ static __global__ void reduce_rows_f32(const float * __restrict__ x, float * __r
 }
 
 
+
+static __global__ void reduce_f32(const float * __restrict__ x, float * __restrict__ dst, const int ncols, const int nrows) {
+    const int row = blockIdx.x;
+    const int col = threadIdx.x;
+
+    float     sum        = 0.0f;
+    if (row * blockDim.x + col < ncols) {
+        for (int i = 0; i < nrows; ++i){
+            sum += x[i * ncols + row * blockDim.x + col];
+        }
+        dst[row * blockDim.x + col] = sum;
+    }
+}
+
+
 __global__ void implgemm(param_t param, const int ks)
 {
     __shared__ __align__(16 * 1024) char smem[24 * 1024];
@@ -160,7 +175,7 @@ __global__ void implgemm(param_t param, const int ks)
 
     int curH = posh_ori + curR; // input h
     int curW = posw_ori + curS; // input w
-    if (curH >= 0 && curW >= 0 && curW < param.w && curH < param.h){
+    if (curH >= 0 && curW >= 0 && curW < param.w && curH < param.h && curC < param.c){
         int inOffsetTmp = curH * inChannelOffset + curW * param.c + curC;
         float4 tmp = reinterpret_cast<float4 *>(&param.input[inOffset + inOffsetTmp])[0];
         input_ldg_reg[0] = tmp.x;
@@ -211,6 +226,7 @@ __global__ void implgemm(param_t param, const int ks)
         for (int i = 0; i < 4; ++i)
         {
             if (weiOffsetTmp < weightKOffset && by * 128 + tx / 8 * 4 + i < param.k)
+            // if (weiOffsetTmp < param.c && by * 128 + tx / 8 * 4 + i < param.k)
             {
                 weight_ldg_reg[i] = param.weight[weiOffset + weiOffsetTmp + i * weightKOffset];
             }
@@ -226,7 +242,7 @@ __global__ void implgemm(param_t param, const int ks)
 
         int curH = posh_ori + curR; // input h
         int curW = posw_ori + curS; // input w
-        if (curH >= 0 && curW >= 0 && curW < param.w && curH < param.h){
+        if (curH >= 0 && curW >= 0 && curW < param.w && curH < param.h && curC < param.c){
             int inOffsetTmp = curH * inChannelOffset + curW * param.c + curC;
             float4 tmp = reinterpret_cast<float4 *>(&param.input[inOffset + inOffsetTmp])[0];
             input_ldg_reg[0] = tmp.x;
@@ -351,9 +367,9 @@ __global__ void implgemm(param_t param, const int ks)
 #pragma unroll
             for (int subk = 0; subk < 16; ++subk)
             {
-                int outOffset = n * param.k * param.Oh * param.Ow * bz + (m_idx + i * 16 + subk) * bz * param.Oh * param.Ow + (n_idx + j * 32) * bz ;
-                if ((m_idx + i * 16 + subk) < param.k && (n_idx + j * 32) < param.Oh * param.Ow)
-                    param.interm[outOffset + z] = smemoutput[output_lds_addr + subk * 32];
+                int outOffset = z * param.n * param.k * param.Oh * param.Ow +  n * param.k * param.Oh * param.Ow  + (m_idx + i * 16 + subk) * param.Oh * param.Ow + (n_idx + j * 32) ;
+                if (n < param.n && (m_idx + i * 16 + subk) < param.k && (n_idx + j * 32) < param.Oh * param.Ow)
+                    param.interm[outOffset] = smemoutput[output_lds_addr + subk * 32];
             }
         }
     }
@@ -379,7 +395,7 @@ cudaError_t launch_implgemm(param_t param)
     assert((c*r*s) % ksplit == 0);
     const int splitk = (c*r*s) / ksplit;
 
-    
+    // printf("split-k partitions %d each partition size %d \n", ksplit, splitk);
     const unsigned int nrows = n * k * outh * outw;
 
     int blockx = ((n * outh * outw + 127) / 128); // blockx  number
@@ -394,8 +410,12 @@ cudaError_t launch_implgemm(param_t param)
     dim3 block(threadx, thready, threadz);
     dim3 grid(blockx, blocky, blockz);
     implgemm<<<grid, block>>>(param, splitk);
-    const dim3 block_nums(nrows, 1, 1);
+    // const dim3 block_nums(nrows, 1, 1);
+    // const dim3 block_dims(512, 1, 1);
+    // reduce_rows_f32<false><<<block_nums, block_dims>>>(param.interm, param.output, ksplit);
+    blockx = (nrows + 511) / 512;
+    const dim3 block_nums(blockx, 1, 1);
     const dim3 block_dims(512, 1, 1);
-    reduce_rows_f32<false><<<block_nums, block_dims>>>(param.interm, param.output, ksplit);
+    reduce_f32<<<block_nums, block_dims>>>(param.interm, param.output, nrows, ksplit);
     return cudaGetLastError();
 }

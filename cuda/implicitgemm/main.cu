@@ -31,6 +31,7 @@ int main(int argc, char **argv)
     unsigned int q = atoi(argv[11]);
     unsigned int nchw = atoi(argv[12]);
     unsigned int k_split = atoi(argv[13]);
+    unsigned int do_verify = atoi(argv[14]);
 
 
     
@@ -156,26 +157,27 @@ int main(int argc, char **argv)
     cudaEventDestroy(start);
     cudaEventDestroy(stop);
 
-    printf("===================start verfiy===================\n");
-    if(param.nchw)
-        direct_conv2dcpu(input, weight, bias, output, n, c, h, w, k, r, s, u, v, p, q);
-    else
-        direct_conv2dcpu_nhwc(input, weight, bias, output, n, c, h, w, k, r, s, u, v, p, q);
+    if(do_verify){
+        printf("===================start verfiy===================\n");
+        if(param.nchw)
+            direct_conv2dcpu(input, weight, bias, output, n, c, h, w, k, r, s, u, v, p, q);
+        else
+            direct_conv2dcpu_nhwc(input, weight, bias, output, n, c, h, w, k, r, s, u, v, p, q);
 
-    int error = 0;
-    for (int i = 0; i < n * k * outh * outw; i++)
-    {
-        if(i < 100)
-            // printf(" postion:%d, gpuvalue:%f, cpuvalue:%f\n", i, output_host[i], output[i]);
-        if (abs(output_host[i] - output[i]) > getPrecision(output[i]))
+        int error = 0;
+        for (int i = 0; i < n * k * outh * outw; i++)
         {
-            printf("error, postion:%d, gpuvalue:%f, cpuvalue:%f\n", i, output_host[i], output[i]);
-            error++;
-            break;
+            if(i < 100)
+                // printf(" postion:%d, gpuvalue:%f, cpuvalue:%f\n", i, output_host[i], output[i]);
+            if (abs(output_host[i] - output[i]) > getPrecision(output[i]))
+            {
+                printf("error, postion:%d, gpuvalue:%f, cpuvalue:%f\n", i, output_host[i], output[i]);
+                error++;
+                break;
+            }
         }
-            
+        printf("================finish,error:%d=========================\n", error);
     }
-    printf("================finish,error:%d=========================\n", error);
 
     float timePerConv = time_elapsed / iternum;
     double gflops = flopsPerConv / (timePerConv / 1000.0f);
