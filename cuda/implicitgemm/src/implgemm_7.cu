@@ -225,7 +225,7 @@ __global__ void implgemm(param_t param, const int ks)
 #pragma unroll
         for (int i = 0; i < 4; ++i)
         {
-            if (weiOffsetTmp < weightKOffset && by * 128 + tx / 8 * 4 + i < param.k)
+            if (weiOffsetTmp < weightKOffset && weiOffsetTmp < start_k + ks && by * 128 + tx / 8 * 4 + i < param.k)
             // if (weiOffsetTmp < param.c && by * 128 + tx / 8 * 4 + i < param.k)
             {
                 weight_ldg_reg[i] = param.weight[weiOffset + weiOffsetTmp + i * weightKOffset];
@@ -242,7 +242,7 @@ __global__ void implgemm(param_t param, const int ks)
 
         int curH = posh_ori + curR; // input h
         int curW = posw_ori + curS; // input w
-        if (curH >= 0 && curW >= 0 && curW < param.w && curH < param.h && curC < param.c){
+        if (curH >= 0 && curW >= 0 && curW < param.w && curH < param.h && curC < param.c && (crs + 8 + tx % 2 * 4) < start_k + ks){
             int inOffsetTmp = curH * inChannelOffset + curW * param.c + curC;
             float4 tmp = reinterpret_cast<float4 *>(&param.input[inOffset + inOffsetTmp])[0];
             input_ldg_reg[0] = tmp.x;

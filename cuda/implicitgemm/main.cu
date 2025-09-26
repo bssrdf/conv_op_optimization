@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <assert.h>
+#include <cstdint>
 #include <cuda_runtime.h>
 // #include <cuda_ext.h>
 #include "verify.h"
