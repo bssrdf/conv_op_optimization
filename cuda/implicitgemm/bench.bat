@@ -22,6 +22,9 @@ goto :eof
 :run_implgemm
 rem Enable delayed expansion so we can see updated variables
 setlocal enabledelayedexpansion
-.\implgemm 8 !C! !H! !W! !K! 3 3 1 1 1 1
+echo ##### Start test implgemm6 #####
+.\implgemm6 1 !C! !H! !W! !K! 3 3 1 1 1 1 0 0
+echo ##### Start test implgemm5 #####
+.\implgemm5 1 !C! !H! !W! !K! 3 3 1 1 1 1 1 0
 endlocal
 goto :eof
