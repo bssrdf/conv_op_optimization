@@ -1,4 +1,5 @@
 #include <cstdint>
+#include <cstdlib>
 #include <assert.h>
 #include <stdio.h>
 #include <cuda_runtime.h>
@@ -7,13 +8,28 @@
     线程通过共享内存交换数据，然后使用高效的条带访问模式协作访问全局内存，加入 bias Epilogue
     64x64x8 BMxBNxBK
 */
+const int WARPSIZE = 32; // warpSize is not constexpr
 
-template<int BM, int BN>
+/*
+ * @tparam BM The threadblock size for M dimension SMEM caching.
+ * @tparam BN The threadblock size for N dimension SMEM caching.
+ * @tparam BK The threadblock size for K dimension SMEM caching.
+ * @tparam WM M dim of continuous tile computed by each warp
+ * @tparam WN N dim of continuous tile computed by each warp
+ * @tparam WMITER The number of subwarp tiling steps in M dimension.
+ * @tparam WNITER The number of subwarp tiling steps in N dimension.
+ * @tparam TM The per-thread tile size for M dimension.
+ * @tparam TN The per-thread tile size for N dimension.
+ */
+template<const int BM, const int BN, const int BK, const int WM, const int WN,
+          const int WNITER, int TM, int TN, const int NUM_THREADS, int PAD=4>
 __global__ void implgemm(param_t param)
 {
-    __shared__ __align__(16 * 1024) char smem[24 * 1024];
-    float *smemweight = reinterpret_cast<float *>(smem);
-    float *smeminput = reinterpret_cast<float *>(smem + 16 * 1024);
+    // __shared__ __align__(16 * 1024) char smem[24 * 1024];
+    // float *smemweight = reinterpret_cast<float *>(smem);
+    // float *smeminput = reinterpret_cast<float *>(smem + 16 * 1024);
+    __shared__ float smeminput[2 * BM * BK];
+    __shared__ float smemweight[2 * BK * (BN+PAD)];
 
     int tx = threadIdx.x;
     int bx = blockIdx.x;
@@ -28,8 +44,8 @@ __global__ void implgemm(param_t param)
     int weight_lds_addr = (warp_id / 2) * 32 + mma_tid_y * 4;
     int input_lds_addr = (warp_id % 2) * 64 + mma_tid_x * 4;
 
-    int x = bx * 128 + input_lds_addr;
-    int y = by * 128 + weight_lds_addr;
+    int x = bx * BM + input_lds_addr;
+    int y = by * BN + weight_lds_addr;
     int z = blockIdx.z;
 
     float weight_ldg_reg[4];
@@ -37,12 +53,12 @@ __global__ void implgemm(param_t param)
     // 当前线程处理的数据点在oh、ow上的坐标
     // int posh_ori = ((bx * 128 + tx / 2 ) / param.Ow) * param.u - param.p;
     // int posw_ori = ((bx * 128 + tx / 2 ) % param.Ow) * param.v - param.q;
-    int posh_ori = fastdiv(bx * 128 + tx / 2, param.OW_fastdiv) * param.u - param.p;
-    int posw_ori = fastmodulo(bx * 128 + tx / 2, param.OW_fastdiv) * param.v - param.q;
+    int posh_ori = fastdiv(bx * BM + tx / 2, param.OW_fastdiv) * param.u - param.p;
+    int posw_ori = fastmodulo(bx * BM + tx / 2, param.OW_fastdiv) * param.v - param.q;
 
     
     int inOffset = z * param.c * param.h * param.w;
-    int weiOffset = (by * 128 + tx / 8 * 4) * param.c * param.r * param.s;
+    int weiOffset = (by * BN + tx / 8 * 4) * param.c * param.r * param.s;
     int inChannelOffset = param.c * param.w;
     // int weightChannelOffset = param.r * param.s;
     int weightKOffset = param.c * param.r * param.s;
@@ -50,27 +66,27 @@ __global__ void implgemm(param_t param)
     // sts addr
     // int weight_sts_addr = (tx % 8) * 132 +
     //                       (tx / 8) * 4;
-    int weight_sts_addr = tx / 2 + (tx % 2) * 132 * 4;
-    int input_sts_addr = tx / 2 + (tx % 2) * 128 * 4;
+    int weight_sts_addr = tx / 2 + (tx % 2) * (BN+PAD) * 4;
+    int input_sts_addr = tx / 2 + (tx % 2) * BM * 4;
 
     int write_flag = 1;
-    float weight_frag[2][8];
-    float input_frag[2][8];
-    float output_frag[8][8];
-#pragma unroll
-    for (int i = 0; i < 8; ++i)
-    {
-#pragma unroll
-        for (int j = 0; j < 8; ++j)
-        {
-            output_frag[i][j] = 0;
-        }
-    }
+    float weight_frag[2][TN];
+    float input_frag[2][TM];
+    float output_frag[TM][TN] = {0.f};
+// #pragma unroll
+//     for (int i = 0; i < 8; ++i)
+//     {
+// #pragma unroll
+//         for (int j = 0; j < 8; ++j)
+//         {
+//             output_frag[i][j] = 0;
+//         }
+//     }
 // ldg
 
-    if (by * 128 + tx / 2  < param.k && tx % 2 * 4 < param.c * param.r * param.s){
+    if (by * BN + tx / 2  < param.k && tx % 2 * 4 < param.c * param.r * param.s){
         // int inOffsetTmp = curH * inChannelOffset + curW * param.c + curC;
-        float4 tmp = reinterpret_cast<float4 *>(&param.weight[by * 128 + (tx / 2) * weightKOffset + tx % 2 * 4])[0];
+        float4 tmp = reinterpret_cast<float4 *>(&param.weight[by * BN + (tx / 2) * weightKOffset + tx % 2 * 4])[0];
         weight_ldg_reg[0] = tmp.x;
         weight_ldg_reg[1] = tmp.y;
         weight_ldg_reg[2] = tmp.z;
@@ -136,11 +152,13 @@ __global__ void implgemm(param_t param)
         input_frag[0][i] = smeminput[input_lds_addr + i];
         input_frag[0][i + 4] = smeminput[input_lds_addr + i + 32];
     }
-    for (int crs = 0; crs < param.r * param.s * param.c; crs += 8)
+
+
+    for (int crs = 0; crs < param.r * param.s * param.c; crs += BK)
     {
         // ldg
-        if (by * 128 + tx / 2 < param.k && tx % 2 * 4 < param.c * param.r * param.s){
-            float4 tmp = reinterpret_cast<float4 *>(&param.weight[by * 128 + tx / 2 * weightKOffset + tx % 2 * 4 + crs + 8])[0];
+        if (by * BN + tx / 2 < param.k && tx % 2 * 4 < param.c * param.r * param.s){
+            float4 tmp = reinterpret_cast<float4 *>(&param.weight[by * BN + tx / 2 * weightKOffset + tx % 2 * 4 + crs + 8])[0];
             weight_ldg_reg[0] = tmp.x;
             weight_ldg_reg[1] = tmp.y;
             weight_ldg_reg[2] = tmp.z;
@@ -180,8 +198,8 @@ __global__ void implgemm(param_t param)
 #pragma unroll
             for (int i = 0; i < 4; ++i)
             {
-                weight_frag[(subcrs + 1) % 2][i] = smemweight[load_flag * 132 * 8 + weight_lds_addr + (subcrs + 1) * 132 + i];
-                weight_frag[(subcrs + 1) % 2][i + 4] = smemweight[load_flag * 132 * 8 + weight_lds_addr + (subcrs + 1) * 132 + i + 16];
+                weight_frag[(subcrs + 1) % 2][i] = smemweight[load_flag * (BN+4) * 8 + weight_lds_addr + (subcrs + 1) * (BN+4) + i];
+                weight_frag[(subcrs + 1) % 2][i + 4] = smemweight[load_flag * (BN+4) * 8 + weight_lds_addr + (subcrs + 1) * (BN+4) + i + 16];
             }
             // float* base_ptr = smemweight + load_flag * 132 * 8 + weight_lds_addr + (subcrs + 1) * 132;
 
@@ -197,8 +215,8 @@ __global__ void implgemm(param_t param)
 #pragma unroll
             for (int i = 0; i < 4; ++i)
             {
-                input_frag[(subcrs + 1) % 2][i] = smeminput[load_flag * 128 * 8 + input_lds_addr + (subcrs + 1) * 128 + i];
-                input_frag[(subcrs + 1) % 2][i + 4] = smeminput[load_flag * 128 * 8 + input_lds_addr + (subcrs + 1) * 128 + i + 32];
+                input_frag[(subcrs + 1) % 2][i] = smeminput[load_flag * BM * 8 + input_lds_addr + (subcrs + 1) * BM + i];
+                input_frag[(subcrs + 1) % 2][i + 4] = smeminput[load_flag * BM * 8 + input_lds_addr + (subcrs + 1) * BM + i + 32];
             }
 
 #pragma unroll
@@ -214,25 +232,25 @@ __global__ void implgemm(param_t param)
         // sts
         for (int i = 0; i < 4; ++i)
         {
-            smemweight[write_flag * 132 * 8 + weight_sts_addr + i * 132] = weight_ldg_reg[i];
+            smemweight[write_flag * (BN+4) * 8 + weight_sts_addr + i * (BN+4)] = weight_ldg_reg[i];
         }
         for (int i = 0; i < 4; ++i)
         {
-            smeminput[write_flag * 128 * 8 + input_sts_addr + i * 128] = input_ldg_reg[i];
+            smeminput[write_flag * BM * 8 + input_sts_addr + i * BM] = input_ldg_reg[i];
         }
         __syncthreads();
         write_flag ^= 1;
 #pragma unroll
         for (int i = 0; i < 4; ++i)
         {
-            weight_frag[0][i] = smemweight[(load_flag ^ 1) * 132 * 8 + weight_lds_addr + i];
-            weight_frag[0][i + 4] = smemweight[(load_flag ^ 1) * 132 * 8 + weight_lds_addr + i + 16];
+            weight_frag[0][i] = smemweight[(load_flag ^ 1) * (BN+4) * 8 + weight_lds_addr + i];
+            weight_frag[0][i + 4] = smemweight[(load_flag ^ 1) * (BN+4) * 8 + weight_lds_addr + i + 16];
         }
 #pragma unroll
         for (int i = 0; i < 4; ++i)
         {
-            input_frag[0][i] = smeminput[(load_flag ^ 1) * 128 * 8 + input_lds_addr + i];
-            input_frag[0][i + 4] = smeminput[(load_flag ^ 1) * 128 * 8 + input_lds_addr + i + 32];
+            input_frag[0][i] = smeminput[(load_flag ^ 1) * BM * 8 + input_lds_addr + i];
+            input_frag[0][i + 4] = smeminput[(load_flag ^ 1) * BM * 8 + input_lds_addr + i + 32];
         }
 #pragma unroll
         for (int i = 0; i < 8; ++i)
@@ -250,9 +268,9 @@ __global__ void implgemm(param_t param)
     float *smembias = reinterpret_cast<float *>(smem + 16 * 1024);
 
     // bias ldg/sts
-    if (tx < 128)
+    if (tx < BN)
     {
-        smembias[tx] = param.bias[by * 128 + tx];
+        smembias[tx] = param.bias[by * BN + tx];
     }
 
     uint32_t output_sts_addr = warp_id * 512 + mma_tid_y * 4 * 8 * 4 + mma_tid_x * 4;
@@ -309,17 +327,61 @@ cudaError_t launch_implgemm(param_t param)
     int outh = (h - r + 2 * p) / u + 1;
     int outw = (w - s + 2 * q) / v + 1;    
 
-    int blockx = ((outh * outw + 127) / 128); // blockx  number
-    int blocky = (k + 127) / 128;             // blocky  number
+    const uint bm = 128;
+    const uint bn = 128;
+    const uint bk = 8;
+
+    const uint NUM_THREADS = 128;
+    
+    const uint wn = 64;
+    const uint wm = 64;
+    const uint wniter = 4;
+    const uint tn = 4;
+    const uint tm = 8;
+    dim3 blockDim(NUM_THREADS);
+
+    constexpr uint NUM_WARPS = NUM_THREADS / WARPSIZE;
+
+    // warptile in threadblocktile
+    static_assert((bn % wn == 0) && (bm % wm == 0));
+    static_assert((bn / wn) * (bm / wm) == NUM_WARPS);
+
+    // threads in warpsubtile
+    static_assert(( wm * wn) % (WARPSIZE * tm * tn * wniter) ==  0);
+    
+    constexpr uint wmiter = (wm * wn) / (WARPSIZE * tm * tn * wniter);
+    // warpsubtile in warptile
+    static_assert((wm % wmiter == 0) && (wn % wniter == 0));
+
+    static_assert((K10_NUM_THREADS * 4) % K10_BK == 0,
+                    "NUM_THREADS*4 must be multiple of K9_BK to avoid quantization "
+                    "issues during GMEM->SMEM tiling (loading only parts of the "
+                    "final row of Bs during each iteraion)");
+    static_assert((K10_NUM_THREADS * 4) % K10_BN == 0,
+                    "NUM_THREADS*4 must be multiple of K9_BN to avoid quantization "
+                    "issues during GMEM->SMEM tiling (loading only parts of the "
+                    "final row of As during each iteration)");
+    static_assert(K10_BN % (16 * K10_TN) == 0,
+                    "BN must be a multiple of 16*TN to avoid quantization effects");
+    static_assert(K10_BM % (16 * K10_TM) == 0,
+                    "BM must be a multiple of 16*TM to avoid quantization effects");
+    static_assert((K10_BM * K10_BK) % (4 * K10_NUM_THREADS) == 0,
+                    "BM*BK must be a multiple of 4*256 to vectorize loads");
+    static_assert((K10_BN * K10_BK) % (4 * K10_NUM_THREADS) == 0,
+                    "BN*BK must be a multiple of 4*256 to vectorize loads");
+
+
+    int blockx = ((outh * outw + bm-1) / bm); // blockx  number
+    int blocky = (k + bn-1) / bn;             // blocky  number
     // int blockx = ((outh * outw + 63) / 64); // blockx  number
     // int blocky = (k + 63) / 64;             // blocky  number
     int blockz = n;                           // blockz  number
     // 合并threadx与thready
-    int threadx = 256; // threadx number per block
+    int threadx = 64; // threadx number per block
     int thready = 1;   // thready number per block
     int threadz = 1;   // threadz number per block
     dim3 block(threadx, thready, threadz);
     dim3 grid(blockx, blocky, blockz);
-    implgemm<64, 64><<<grid, block>>>(param);
+    implgemm<64, 64, 8, 8, 8><<<grid, block>>>(param);
     return cudaGetLastError();
 }
