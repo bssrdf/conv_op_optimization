@@ -80,9 +80,9 @@ __global__ void implgemm(param_t param)
     // int weight_sts_addr = (tx % 8) * 132 +
     //                       (tx / 8) * 4;
     int write_flag = 1;
-    float weight_frag[2][TN];
-    float input_frag[2][TM];
-    float output_frag[TM][TN] = {0.f};
+    float weight_frag[2][WNITER * TN] = {0.f};
+    float input_frag[2][WMITER * TM] = {0.f};
+    float output_frag[WMITER * TM * WNITER * TN] = {0.f};
 // #pragma unroll
 //     for (int i = 0; i < 8; ++i)
 //     {
@@ -106,21 +106,12 @@ __global__ void implgemm(param_t param)
     const uint weight_sts_addr = innerRowA + innerColA * (BN+PAD) * 4;
     for (uint offset = 0; offset + rowStrideA < BN; offset += rowStrideA) {
         if (by * BN  + innerRowA + offset < param.k &&  innerColA * 4 < param.c * param.r * param.s){
-            // int inOffsetTmp = curH * inChannelOffset + curW * param.c + curC;
             float4 tmp = reinterpret_cast<float4 *>(&param.weight[(by * BN + innerRowA + offset) * weightKOffset + innerColA * 4])[0];
-            // weight_ldg_reg[0] = tmp.x;
-            // weight_ldg_reg[1] = tmp.y;
-            // weight_ldg_reg[2] = tmp.z;
-            // weight_ldg_reg[3] = tmp.w;
             smemweight[weight_sts_addr + offset +          0] = tmp.x;
             smemweight[weight_sts_addr + offset +   (BN+PAD)] = tmp.y;
             smemweight[weight_sts_addr + offset + 2*(BN+PAD)] = tmp.z;
             smemweight[weight_sts_addr + offset + 3*(BN+PAD)] = tmp.w;
         } else {
-//  #pragma unroll
-        // for (int i = 0; i < 4; ++i)
-        //     weight_ldg_reg[i] = 0.0;
-        // } 
 #pragma unroll
             for (int i = 0; i < 4; ++i){
                 smemweight[weight_sts_addr + offset + i*(BN+PAD)] = 0.f;
@@ -198,43 +189,43 @@ __global__ void implgemm(param_t param)
     for (int crs = 0; crs < param.r * param.s * param.c; crs += BK)
     {
         // ldg
-        if (by * BN + tx / 2 < param.k && tx % 2 * 4 < param.c * param.r * param.s){
-            float4 tmp = reinterpret_cast<float4 *>(&param.weight[by * BN + tx / 2 * weightKOffset + tx % 2 * 4 + crs + 8])[0];
-            weight_ldg_reg[0] = tmp.x;
-            weight_ldg_reg[1] = tmp.y;
-            weight_ldg_reg[2] = tmp.z;
-            weight_ldg_reg[3] = tmp.w;
-        } else {
- #pragma unroll
-            for (int i = 0; i < 4; ++i)
-                weight_ldg_reg[i] = 0.0;
-        }
+//         if (by * BN + tx / 2 < param.k && tx % 2 * 4 < param.c * param.r * param.s){
+//             float4 tmp = reinterpret_cast<float4 *>(&param.weight[by * BN + tx / 2 * weightKOffset + tx % 2 * 4 + crs + 8])[0];
+//             weight_ldg_reg[0] = tmp.x;
+//             weight_ldg_reg[1] = tmp.y;
+//             weight_ldg_reg[2] = tmp.z;
+//             weight_ldg_reg[3] = tmp.w;
+//         } else {
+//  #pragma unroll
+//             for (int i = 0; i < 4; ++i)
+//                 weight_ldg_reg[i] = 0.0;
+//         }
         // curR = (crs + 8 + tx % 2 * 4) / (param.s * param.c);             // channel offset
         // curS = ((crs + 8 + tx % 2 * 4) % (param.s * param.c)) / param.c; // kernel r offset
         // curC = ((crs + 8 + tx % 2 * 4) % (param.s * param.c)) % param.c; // kernel s offset
-        curR = fastdiv(crs + 8 + (tx % 2) * 4,  param.SC_fastdiv);             // channel offset
-        curS = fastdiv(fastmodulo(crs + 8 + (tx % 2) * 4, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
-        curC = fastmodulo(fastmodulo(crs + 8 + (tx % 2) * 4, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
+//         curR = fastdiv(crs + 8 + (tx % 2) * 4,  param.SC_fastdiv);             // channel offset
+//         curS = fastdiv(fastmodulo(crs + 8 + (tx % 2) * 4, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
+//         curC = fastmodulo(fastmodulo(crs + 8 + (tx % 2) * 4, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
 
-        int curH = posh_ori + curR; // input h
-        int curW = posw_ori + curS; // input w
-        if (curH >= 0 && curW >= 0 && curW < param.w && curH < param.h){
-            int inOffsetTmp = curH * inChannelOffset + curW * param.c + curC;
+//         int curH = posh_ori + curR; // input h
+//         int curW = posw_ori + curS; // input w
+//         if (curH >= 0 && curW >= 0 && curW < param.w && curH < param.h){
+//             int inOffsetTmp = curH * inChannelOffset + curW * param.c + curC;
 
-            // float4 tmp = reinterpret_cast<float4 *>(&param.input[inOffset + inOffsetTmp])[0];
-            // input_ldg_reg[0] = tmp.x;
-            // input_ldg_reg[1] = tmp.y;
-            // input_ldg_reg[2] = tmp.z;
-            // input_ldg_reg[3] = tmp.w;
-            reinterpret_cast<float4 *>(&input_ldg_reg[0])[0] = reinterpret_cast<float4 *>(&param.input[inOffset + inOffsetTmp])[0];        } else {
-#pragma unroll
-            for (int i = 0; i < 4; ++i)
-                input_ldg_reg[i] = 0.0;
-        }
+//             // float4 tmp = reinterpret_cast<float4 *>(&param.input[inOffset + inOffsetTmp])[0];
+//             // input_ldg_reg[0] = tmp.x;
+//             // input_ldg_reg[1] = tmp.y;
+//             // input_ldg_reg[2] = tmp.z;
+//             // input_ldg_reg[3] = tmp.w;
+//             reinterpret_cast<float4 *>(&input_ldg_reg[0])[0] = reinterpret_cast<float4 *>(&param.input[inOffset + inOffsetTmp])[0];        } else {
+// #pragma unroll
+//             for (int i = 0; i < 4; ++i)
+//                 input_ldg_reg[i] = 0.0;
+//         }
 
         int load_flag = write_flag ^ 1;
 #pragma unroll
-        for (int subcrs = 0; subcrs < 8 - 1; ++subcrs)
+        for (int subcrs = 0; subcrs < BK - 1; ++subcrs)
         {
 #pragma unroll
             for (int i = 0; i < 4; ++i)
@@ -270,15 +261,51 @@ __global__ void implgemm(param_t param)
                 }
             }
         }
+        // ldg
+        for (uint offset = 0; offset + rowStrideA < BN; offset += rowStrideA) {
+            if (by * BN  + innerRowA + offset < param.k &&  innerColA * 4 + crs + 8 < param.c * param.r * param.s){
+                float4 tmp = reinterpret_cast<float4 *>(&param.weight[(by * BN + innerRowA + offset) * weightKOffset + innerColA * 4 + crs + 8])[0];
+                smemweight[write_flag * (BN+PAD) * BK + weight_sts_addr + offset +          0] = tmp.x;
+                smemweight[write_flag * (BN+PAD) * BK + weight_sts_addr + offset +   (BN+PAD)] = tmp.y;
+                smemweight[write_flag * (BN+PAD) * BK + weight_sts_addr + offset + 2*(BN+PAD)] = tmp.z;
+                smemweight[write_flag * (BN+PAD) * BK + weight_sts_addr + offset + 3*(BN+PAD)] = tmp.w;
+            } else {
+#pragma unroll
+                for (int i = 0; i < 4; ++i)
+                    smemweight[weight_sts_addr + offset + i*(BN+PAD)] = 0.f;
+            }
+        }
+        for (uint offset = 0; offset + rowStrideA < BM; offset += rowStrideA) {
+            const uint posh_ori = fastdiv(bx * BM + innerRowA + offset, param.OW_fastdiv) * param.u - param.p;
+            const uint posw_ori = fastmodulo(bx * BM + innerRowA + offset, param.OW_fastdiv) * param.v - param.q;
+            const uint curR = fastdiv(innerColA * 4 + crs + 8,  param.SC_fastdiv);             // channel offset
+            const uint curS = fastdiv(fastmodulo(innerColA * 4 + crs + 8, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
+            const uint curC = fastmodulo(fastmodulo(innerColA * 4 + crs + 8, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
+
+            const uint curH = posh_ori + curR; // input h
+            const uint curW = posw_ori + curS; // input w
+            if (curH >= 0 && curW >= 0 && curW < param.w && curH < param.h){
+                int inOffsetTmp = curH * inChannelOffset + curW * param.c + curC;
+                float4 tmp = reinterpret_cast<float4 *>(&param.input[inOffset + inOffsetTmp])[0];
+                smeminput[write_flag * BM * BK + input_sts_addr + offset +     0] = tmp.x;
+                smeminput[write_flag * BM * BK + input_sts_addr + offset +    BM] = tmp.y;
+                smeminput[write_flag * BM * BK + input_sts_addr + offset +  2*BM] = tmp.z;
+                smeminput[write_flag * BM * BK + input_sts_addr + offset +  3*BM] = tmp.w;
+            } else {
+#pragma unroll
+                for (int i = 0; i < 4; ++i)
+                    smeminput[input_sts_addr + offset + i*BM] = 0.f;
+            }
+        }
         // sts
-        for (int i = 0; i < 4; ++i)
-        {
-            smemweight[write_flag * (BN+4) * 8 + weight_sts_addr + i * (BN+4)] = weight_ldg_reg[i];
-        }
-        for (int i = 0; i < 4; ++i)
-        {
-            smeminput[write_flag * BM * 8 + input_sts_addr + i * BM] = input_ldg_reg[i];
-        }
+        // for (int i = 0; i < 4; ++i)
+        // {
+        //     smemweight[write_flag * (BN+4) * 8 + weight_sts_addr + i * (BN+4)] = weight_ldg_reg[i];
+        // }
+        // for (int i = 0; i < 4; ++i)
+        // {
+        //     smeminput[write_flag * BM * 8 + input_sts_addr + i * BM] = input_ldg_reg[i];
+        // }
         __syncthreads();
         write_flag ^= 1;
 #pragma unroll
