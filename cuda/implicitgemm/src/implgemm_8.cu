@@ -8,6 +8,8 @@
     线程通过共享内存交换数据，然后使用高效的条带访问模式协作访问全局内存，加入 bias Epilogue
     64x64x8 BMxBNxBK
 */
+
+typedef unsigned int uint;
 const int WARPSIZE = 32; // warpSize is not constexpr
 
 /*
@@ -22,7 +24,7 @@ const int WARPSIZE = 32; // warpSize is not constexpr
  * @tparam TN The per-thread tile size for N dimension.
  */
 template<const int BM, const int BN, const int BK, const int WM, const int WN,
-          const int WNITER, int TM, int TN, const int NUM_THREADS, int PAD=4>
+          const int WNITER, const int TM, const int TN, const int NUM_THREADS, int PAD=4>
 __global__ void implgemm(param_t param)
 {
     // __shared__ __align__(16 * 1024) char smem[24 * 1024];
@@ -31,30 +33,41 @@ __global__ void implgemm(param_t param)
     __shared__ float smeminput[2 * BM * BK];
     __shared__ float smemweight[2 * BK * (BN+PAD)];
 
-    int tx = threadIdx.x;
-    int bx = blockIdx.x;
-    int by = blockIdx.y;
+    const uint tx = threadIdx.x;
+    const uint bx = blockIdx.x;
+    const uint by = blockIdx.y;
 
     // Warp tile
-    const int lane_id = threadIdx.x % 32;
-    const int warp_id = threadIdx.x / 32;
-    const int mma_tid_x = (lane_id / 2) % 8;
-    const int mma_tid_y = (lane_id / 16) * 2 + (lane_id % 2);
+    const uint lane_id = tx % WARPSIZE;
+    const uint warp_id = tx / WARPSIZE;
+    const int mma_tid_x = warp_id / (BN / WN); //(lane_id / 2) % 8;
+    const int mma_tid_y = warp_id % (BN / WN); //(lane_id / 16) * 2 + (lane_id % 2);
+
     // lds addr
     int weight_lds_addr = (warp_id / 2) * 32 + mma_tid_y * 4;
     int input_lds_addr = (warp_id % 2) * 64 + mma_tid_x * 4;
+
+    // size of the warp subtile
+    constexpr uint WMITER = (WM * WN) / (WARPSIZE * TM * TN * WNITER);
+    constexpr uint WSUBM = WM / WMITER; // 64/2=32
+    constexpr uint WSUBN = WN / WNITER; // 32/2=16
+
+    // Placement of the thread in the warp subtile
+    const uint threadIdxInWarp = tx % WARPSIZE;         // [0, 31]
+    const uint threadColInWarp = threadIdxInWarp % (WSUBN / TN); // i%(16/4)
+    const uint threadRowInWarp = threadIdxInWarp / (WSUBN / TN); // i/4
 
     int x = bx * BM + input_lds_addr;
     int y = by * BN + weight_lds_addr;
     int z = blockIdx.z;
 
-    float weight_ldg_reg[4];
-    float input_ldg_reg[4];
+    // float weight_ldg_reg[4];
+    // float input_ldg_reg[4];
     // 当前线程处理的数据点在oh、ow上的坐标
     // int posh_ori = ((bx * 128 + tx / 2 ) / param.Ow) * param.u - param.p;
     // int posw_ori = ((bx * 128 + tx / 2 ) % param.Ow) * param.v - param.q;
-    int posh_ori = fastdiv(bx * BM + tx / 2, param.OW_fastdiv) * param.u - param.p;
-    int posw_ori = fastmodulo(bx * BM + tx / 2, param.OW_fastdiv) * param.v - param.q;
+    // int posh_ori = fastdiv(bx * BM + tx / 2, param.OW_fastdiv) * param.u - param.p;
+    // int posw_ori = fastmodulo(bx * BM + tx / 2, param.OW_fastdiv) * param.v - param.q;
 
     
     int inOffset = z * param.c * param.h * param.w;
@@ -66,9 +79,6 @@ __global__ void implgemm(param_t param)
     // sts addr
     // int weight_sts_addr = (tx % 8) * 132 +
     //                       (tx / 8) * 4;
-    int weight_sts_addr = tx / 2 + (tx % 2) * (BN+PAD) * 4;
-    int input_sts_addr = tx / 2 + (tx % 2) * BM * 4;
-
     int write_flag = 1;
     float weight_frag[2][TN];
     float input_frag[2][TM];
@@ -82,19 +92,40 @@ __global__ void implgemm(param_t param)
 //             output_frag[i][j] = 0;
 //         }
 //     }
-// ldg
 
-    if (by * BN + tx / 2  < param.k && tx % 2 * 4 < param.c * param.r * param.s){
-        // int inOffsetTmp = curH * inChannelOffset + curW * param.c + curC;
-        float4 tmp = reinterpret_cast<float4 *>(&param.weight[by * BN + (tx / 2) * weightKOffset + tx % 2 * 4])[0];
-        weight_ldg_reg[0] = tmp.x;
-        weight_ldg_reg[1] = tmp.y;
-        weight_ldg_reg[2] = tmp.z;
-        weight_ldg_reg[3] = tmp.w;
-    } else {
- #pragma unroll
-        for (int i = 0; i < 4; ++i)
-            weight_ldg_reg[i] = 0.0;
+    // calculating the indices that this thread will load into SMEM
+    // we'll load 128bit / 32bit = 4 elements per thread at each step
+    const uint innerRowA = tx / (BK / 4);
+    const uint innerColA = tx % (BK / 4);
+    constexpr uint rowStrideA = (NUM_THREADS * 4) / BK;
+    const uint innerRowB = tx / (BN / 4);
+    const uint innerColB = tx % (BN / 4);
+    constexpr uint rowStrideB = NUM_THREADS / (BN / 4);
+
+// ldg
+    const uint weight_sts_addr = innerRowA + innerColA * (BN+PAD) * 4;
+    for (uint offset = 0; offset + rowStrideA < BN; offset += rowStrideA) {
+        if (by * BN  + innerRowA + offset < param.k &&  innerColA * 4 < param.c * param.r * param.s){
+            // int inOffsetTmp = curH * inChannelOffset + curW * param.c + curC;
+            float4 tmp = reinterpret_cast<float4 *>(&param.weight[(by * BN + innerRowA + offset) * weightKOffset + innerColA * 4])[0];
+            // weight_ldg_reg[0] = tmp.x;
+            // weight_ldg_reg[1] = tmp.y;
+            // weight_ldg_reg[2] = tmp.z;
+            // weight_ldg_reg[3] = tmp.w;
+            smemweight[weight_sts_addr + offset +          0] = tmp.x;
+            smemweight[weight_sts_addr + offset +   (BN+PAD)] = tmp.y;
+            smemweight[weight_sts_addr + offset + 2*(BN+PAD)] = tmp.z;
+            smemweight[weight_sts_addr + offset + 3*(BN+PAD)] = tmp.w;
+        } else {
+//  #pragma unroll
+        // for (int i = 0; i < 4; ++i)
+        //     weight_ldg_reg[i] = 0.0;
+        // } 
+#pragma unroll
+            for (int i = 0; i < 4; ++i){
+                smemweight[weight_sts_addr + offset + i*(BN+PAD)] = 0.f;
+            }
+        }
     }
 
     // int curC = (tx / 32) / (param.r * param.s);             // channel offset
@@ -104,34 +135,44 @@ __global__ void implgemm(param_t param)
     // int curR = (tx % 2) * 4 / (param.s * param.c);             // channel offset
     // int curS = ((tx % 2) * 4 % (param.s * param.c)) / param.c; // kernel r offset
     // int curC = ((tx % 2) * 4 % (param.s * param.c)) % param.c; // kernel s offset
-    int curR = fastdiv((tx % 2) * 4,  param.SC_fastdiv);             // channel offset
-    int curS = fastdiv(fastmodulo((tx % 2) * 4, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
-    int curC = fastmodulo(fastmodulo((tx % 2) * 4, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
+    
+    const uint input_sts_addr = innerRowA + innerColA * BM * 4;
+    for (uint offset = 0; offset + rowStrideA < BM; offset += rowStrideA) {
+        const uint posh_ori = fastdiv(bx * BM + innerRowA + offset, param.OW_fastdiv) * param.u - param.p;
+        const uint posw_ori = fastmodulo(bx * BM + innerRowA + offset, param.OW_fastdiv) * param.v - param.q;
+        const uint curR = fastdiv(innerColA * 4,  param.SC_fastdiv);             // channel offset
+        const uint curS = fastdiv(fastmodulo(innerColA * 4, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
+        const uint curC = fastmodulo(fastmodulo(innerColA * 4, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
 
-    int curH = posh_ori + curR; // input h
-    int curW = posw_ori + curS; // input w
-    if (curH >= 0 && curW >= 0 && curW < param.w && curH < param.h){
-        int inOffsetTmp = curH * inChannelOffset + curW * param.c + curC;
-        float4 tmp = reinterpret_cast<float4 *>(&param.input[inOffset + inOffsetTmp])[0];
-        input_ldg_reg[0] = tmp.x;
-        input_ldg_reg[1] = tmp.y;
-        input_ldg_reg[2] = tmp.z;
-        input_ldg_reg[3] = tmp.w;
-    } else {
-#pragma unroll
-        for (int i = 0; i < 4; ++i)
-            input_ldg_reg[i] = 0.0;
+        const uint curH = posh_ori + curR; // input h
+        const uint curW = posw_ori + curS; // input w
+        if (curH >= 0 && curW >= 0 && curW < param.w && curH < param.h){
+            int inOffsetTmp = curH * inChannelOffset + curW * param.c + curC;
+            float4 tmp = reinterpret_cast<float4 *>(&param.input[inOffset + inOffsetTmp])[0];
+            smeminput[input_sts_addr + offset +     0] = tmp.x;
+            smeminput[input_sts_addr + offset +    BM] = tmp.y;
+            smeminput[input_sts_addr + offset +  2*BM] = tmp.z;
+            smeminput[input_sts_addr + offset +  3*BM] = tmp.w;
+            // input_ldg_reg[0] = tmp.x;
+            // input_ldg_reg[1] = tmp.y;
+            // input_ldg_reg[2] = tmp.z;
+            // input_ldg_reg[3] = tmp.w;
+        } else {
+    #pragma unroll
+            for (int i = 0; i < 4; ++i)
+                smeminput[input_sts_addr + offset + i*BM] = 0.f;
+        }
     }
 
     // sts
-    for (int i = 0; i < 4; ++i)
-    {
-        smemweight[weight_sts_addr + i*132] = weight_ldg_reg[i];
-    }
-    for (int i = 0; i < 4; ++i)
-    {
-        smeminput[input_sts_addr + i * 128] = input_ldg_reg[i];
-    }
+    // for (int i = 0; i < 4; ++i)
+    // {
+    //     smemweight[weight_sts_addr + i*132] = weight_ldg_reg[i];
+    // }
+    // for (int i = 0; i < 4; ++i)
+    // {
+    //     smeminput[input_sts_addr + i * 128] = input_ldg_reg[i];
+    // }
 
     __syncthreads();
     // lds
@@ -353,21 +394,21 @@ cudaError_t launch_implgemm(param_t param)
     // warpsubtile in warptile
     static_assert((wm % wmiter == 0) && (wn % wniter == 0));
 
-    static_assert((K10_NUM_THREADS * 4) % K10_BK == 0,
+    static_assert((NUM_THREADS * 4) % bk == 0,
                     "NUM_THREADS*4 must be multiple of K9_BK to avoid quantization "
                     "issues during GMEM->SMEM tiling (loading only parts of the "
                     "final row of Bs during each iteraion)");
-    static_assert((K10_NUM_THREADS * 4) % K10_BN == 0,
+    static_assert((NUM_THREADS * 4) % bn == 0,
                     "NUM_THREADS*4 must be multiple of K9_BN to avoid quantization "
                     "issues during GMEM->SMEM tiling (loading only parts of the "
                     "final row of As during each iteration)");
-    static_assert(K10_BN % (16 * K10_TN) == 0,
+    static_assert( bn % (16 * tn) == 0,
                     "BN must be a multiple of 16*TN to avoid quantization effects");
-    static_assert(K10_BM % (16 * K10_TM) == 0,
+    static_assert( bm % (16 * tm) == 0,
                     "BM must be a multiple of 16*TM to avoid quantization effects");
-    static_assert((K10_BM * K10_BK) % (4 * K10_NUM_THREADS) == 0,
+    static_assert(( bm * bk) % (4 * NUM_THREADS) == 0,
                     "BM*BK must be a multiple of 4*256 to vectorize loads");
-    static_assert((K10_BN * K10_BK) % (4 * K10_NUM_THREADS) == 0,
+    static_assert((bn * bk) % (4 * NUM_THREADS) == 0,
                     "BN*BK must be a multiple of 4*256 to vectorize loads");
 
 
@@ -377,11 +418,11 @@ cudaError_t launch_implgemm(param_t param)
     // int blocky = (k + 63) / 64;             // blocky  number
     int blockz = n;                           // blockz  number
     // 合并threadx与thready
-    int threadx = 64; // threadx number per block
+    int threadx = NUM_THREADS; // threadx number per block
     int thready = 1;   // thready number per block
     int threadz = 1;   // threadz number per block
     dim3 block(threadx, thready, threadz);
     dim3 grid(blockx, blocky, blockz);
-    implgemm<64, 64, 8, 8, 8><<<grid, block>>>(param);
+    implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS><<<grid, block>>>(param);
     return cudaGetLastError();
 }

@@ -69,7 +69,7 @@ __global__ void implgemm(param_t param)
 
     if (by * 128 + tx / 2  < param.k && tx % 2 * 4 < param.c * param.r * param.s){
         // int inOffsetTmp = curH * inChannelOffset + curW * param.c + curC;
-        float4 tmp = reinterpret_cast<float4 *>(&param.weight[by * 128 + (tx / 2) * weightKOffset + tx % 2 * 4])[0];
+        float4 tmp = reinterpret_cast<float4 *>(&param.weight[(by * 128 + (tx / 2)) * weightKOffset + tx % 2 * 4])[0];
         weight_ldg_reg[0] = tmp.x;
         weight_ldg_reg[1] = tmp.y;
         weight_ldg_reg[2] = tmp.z;
@@ -139,7 +139,7 @@ __global__ void implgemm(param_t param)
     {
         // ldg
         if (by * 128 + tx / 2 < param.k && tx % 2 * 4 < param.c * param.r * param.s){
-            float4 tmp = reinterpret_cast<float4 *>(&param.weight[by * 128 + tx / 2 * weightKOffset + tx % 2 * 4 + crs + 8])[0];
+            float4 tmp = reinterpret_cast<float4 *>(&param.weight[(by * 128 + tx / 2) * weightKOffset + tx % 2 * 4 + crs + 8])[0];
             weight_ldg_reg[0] = tmp.x;
             weight_ldg_reg[1] = tmp.y;
             weight_ldg_reg[2] = tmp.z;

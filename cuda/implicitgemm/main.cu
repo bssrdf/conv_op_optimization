@@ -128,17 +128,18 @@ int main(int argc, char **argv)
 
     /*******************************warm up and get result************************************/
     OPENCNN_CALL(launch_implgemm(param));
-
-    cudaMemcpy(output_host, output_device, n * k * outh * outw * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaDeviceSynchronize();
+    
 
     /*******************************cost time test************************************/
     cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
-    cudaEventRecord(start, 0);
     float time_elapsed = 0.0;
 
-    int iternum = 20;
+    int iternum = 20;    
+    cudaEventCreate(&start, cudaEventBlockingSync);
+    cudaEventCreate(&stop, cudaEventBlockingSync);
+    cudaEventRecord(start, 0);
+    
     for (int i = 0; i < iternum; i++)
     {
         OPENCNN_CALL(launch_implgemm(param));
@@ -150,6 +151,8 @@ int main(int argc, char **argv)
 
     cudaEventDestroy(start);
     cudaEventDestroy(stop);
+
+    cudaMemcpy(output_host, output_device, n * k * outh * outw * sizeof(float), cudaMemcpyDeviceToHost);
 
     if(do_verify){
         printf("===================start verfiy===================\n");
