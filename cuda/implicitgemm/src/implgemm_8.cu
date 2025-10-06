@@ -24,14 +24,17 @@ const int WARPSIZE = 32; // warpSize is not constexpr
  * @tparam TN The per-thread tile size for N dimension.
  */
 template<const int BM, const int BN, const int BK, const int WM, const int WN,
-          const int WNITER, const int TM, const int TN, const int NUM_THREADS, int PAD=4>
+          const int WNITER, const int TM, const int TN, const int NUM_THREADS,
+          const int OUTNITER, int PAD=4>
 __global__ void implgemm(param_t param)
 {
     // __shared__ __align__(16 * 1024) char smem[24 * 1024];
-    // float *smemweight = reinterpret_cast<float *>(smem);
-    // float *smeminput = reinterpret_cast<float *>(smem + 16 * 1024);
-    __shared__ float smeminput[2 * BM * BK];
-    __shared__ float smemweight[2 * BK * (BN+PAD)];
+
+    __shared__ char smem[4*(2 * BM * BK +  2 * BK * (BN+PAD))];
+    // __shared__ float smeminput[2 * BM * BK];
+    // __shared__ float smemweight[2 * BK * (BN+PAD)];
+    float *smemweight = reinterpret_cast<float *>(smem);
+    float *smeminput = reinterpret_cast<float *>(smem + 2 * BK * (BN+PAD) * 4);
 
     const uint tx = threadIdx.x;
     const uint bx = blockIdx.x;
@@ -57,8 +60,8 @@ __global__ void implgemm(param_t param)
     const uint threadColInWarp = threadIdxInWarp % (WSUBN / TN); // i%(16/4)
     const uint threadRowInWarp = threadIdxInWarp / (WSUBN / TN); // i/4
 
-    int x = bx * BM + input_lds_addr;
-    int y = by * BN + weight_lds_addr;
+    // int x = bx * BM + input_lds_addr;
+    // int y = by * BN + weight_lds_addr;
     int z = blockIdx.z;
 
     // float weight_ldg_reg[4];
@@ -288,7 +291,7 @@ __global__ void implgemm(param_t param)
                     // calculate per-thread results
                     for (uint resIdxM = 0; resIdxM < TM; ++resIdxM) {
                         for (uint resIdxN = 0; resIdxN < TN; ++resIdxN) {
-                            output[(wSubRowIdx * TM + resIdxM) * (WNITER * TN) +
+                            output_frag[(wSubRowIdx * TM + resIdxM) * (WNITER * TN) +
                                         (wSubColIdx * TN) + resIdxN] +=
                                 input_frag[subcrs % 2][wSubRowIdx * TM + resIdxM] *
                                 weight_frag[subcrs % 2][wSubColIdx * TN + resIdxN];
@@ -372,7 +375,7 @@ __global__ void implgemm(param_t param)
                 // calculate per-thread results
                 for (uint resIdxM = 0; resIdxM < TM; ++resIdxM) {
                     for (uint resIdxN = 0; resIdxN < TN; ++resIdxN) {
-                        output[(wSubRowIdx * TM + resIdxM) * (WNITER * TN) +
+                        output_frag[(wSubRowIdx * TM + resIdxM) * (WNITER * TN) +
                                     (wSubColIdx * TN) + resIdxN] +=
                             input_frag[1][wSubRowIdx * TM + resIdxM] *
                             weight_frag[1][wSubColIdx * TN + resIdxN];
@@ -393,51 +396,96 @@ __global__ void implgemm(param_t param)
 
     // reuse smem
     float *smemoutput = reinterpret_cast<float *>(smem);
-    float *smembias = reinterpret_cast<float *>(smem + 16 * 1024);
+    // float *smembias = reinterpret_cast<float *>(smem + 16 * 1024);
 
     // bias ldg/sts
-    if (tx < BN)
-    {
-        smembias[tx] = param.bias[by * BN + tx];
-    }
+    // if (tx < BN)
+    // {
+    //     smembias[tx] = param.bias[by * BN + tx];
+    // }
 
-    uint32_t output_sts_addr = warp_id * 512 + mma_tid_y * 4 * 8 * 4 + mma_tid_x * 4;
-    uint32_t output_lds_addr = warp_id * 512 + lane_id;
-    uint32_t bias_lds_addr = warp_id / 2 * 32;
+    constexpr uint OUTMITER = (TM * TN * WNITER * WMITER * NUM_THREADS) / (2 * BK * (BM + BN)) / OUTNITER;
+    const uint WMITER_TM_OUTMITER = WMITER * TM / OUTMITER;
+    const uint WNITER_TN_OUTNITER = WNITER * TN / OUTNITER;
 
-    uint32_t m_idx = blockIdx.y * 128 + warp_id / 2 * 32;
-    uint32_t n_idx = blockIdx.x * 128 + warp_id % 2 * 64 + lane_id;
 
+
+//     // uint32_t bias_lds_addr = warp_id / 2 * 32;
+
+// #pragma unroll
+//     for (int i = 0; i < 2; ++i)
+//     {
+// #pragma unroll
+//         for (int j = 0; j < 2; ++j)
+//         {
+//             __syncthreads();
+
+// #pragma unroll
+//             for (int subi = 0; subi < 4; ++subi)
+//             {
+// #pragma unroll
+//                 for (int subj = 0; subj < 4; ++subj)
+//                 {
+//                     // output sts
+//                     smemoutput[output_sts_addr + subi * 8 * 4 + subj] = output_frag[i * 4 + subi][j * 4 + subj];
+//                 }
+//             }
+//             __syncthreads();
+
+// #pragma unroll
+//             for (int subk = 0; subk < 16; ++subk)
+//             {
+//                 int outOffset = z * param.k * param.Oh * param.Ow + (m_idx + i * 16 + subk) * param.Oh * param.Ow + n_idx + j * 32;
+//                 if ((m_idx + i * 16 + subk) < param.k && (n_idx + j * 32) < param.Oh * param.Ow)
+//                     param.output[outOffset] = smemoutput[output_lds_addr + subk * 32];
+//             }
+//         }
+//     }
+    // uint32_t output_sts_addr = warp_id * 512 + mma_tid_y * 4 * 8 * 4 + mma_tid_x * 4;
+    //     uint32_t output_lds_addr = warp_id * 512 + lane_id;
+    const uint m_idx = by * BN + mma_tid_y * WSUBN + threadColInWarp * WNITER_TN_OUTNITER;
+    const uint n_idx = bx * BM + mma_tid_x * WSUBM + threadRowInWarp * WMITER_TM_OUTMITER;
+    const uint output_sts_addr = warp_id * WMITER_TM_OUTMITER * WNITER_TN_OUTNITER * WARPSIZE +
+                        (threadRowInWarp * (WSUBN / TN)  + threadColInWarp) * WMITER_TM_OUTMITER * WNITER_TN_OUTNITER;
 #pragma unroll
-    for (int i = 0; i < 2; ++i)
+    for (int i = 0; i < OUTMITER; ++i)
     {
 #pragma unroll
-        for (int j = 0; j < 2; ++j)
+        for (int j = 0; j < OUTNITER; ++j)
         {
             __syncthreads();
 
 #pragma unroll
-            for (int subi = 0; subi < 4; ++subi)
+            for (int subi = 0; subi < WMITER_TM_OUTMITER; ++subi)
             {
 #pragma unroll
-                for (int subj = 0; subj < 4; ++subj)
+                for (int subj = 0; subj < WNITER_TN_OUTNITER; ++subj)
                 {
                     // output sts
-                    smemoutput[output_sts_addr + subi * 8 * 4 + subj] = output_frag[i * 4 + subi][j * 4 + subj];
+                    smemoutput[output_sts_addr + subi * WNITER_TN_OUTNITER + subj] =
+                        output_frag[(i * WMITER_TM_OUTMITER + subi) * (WNITER * TN) + j * WNITER_TN_OUTNITER + subj];
                 }
             }
             __syncthreads();
 
 #pragma unroll
-            for (int subk = 0; subk < 16; ++subk)
-            {
-                int outOffset = z * param.k * param.Oh * param.Ow + (m_idx + i * 16 + subk) * param.Oh * param.Ow + n_idx + j * 32;
-                if ((m_idx + i * 16 + subk) < param.k && (n_idx + j * 32) < param.Oh * param.Ow)
-                    param.output[outOffset] = smemoutput[output_lds_addr + subk * 32] + smembias[bias_lds_addr + i * 16 + subk];
+            for (int subi = 0; subi < WMITER_TM_OUTMITER; ++subi) {
+#pragma unroll
+                for (int subj = 0; subj < WNITER_TN_OUTNITER; ++subj){
+            // for (int subk = 0; subk < WMITER_TM_OUTMITER * WMITER_TN_OUTMITER; ++subk)
+                    const uint outOffset = z * param.k * param.Oh * param.Ow +
+                                (m_idx + subj) * param.Oh * param.Ow +
+                                n_idx + subi;
+                    if ((m_idx + subj) < param.k && (n_idx + subi) < param.Oh * param.Ow)
+                        param.output[outOffset] = smemoutput[output_sts_addr + subi * WNITER_TN_OUTNITER + subj];
+                }
             }
         }
     }
+
 }
+
+
 cudaError_t launch_implgemm(param_t param)
 {
     unsigned int n = param.n;
@@ -459,27 +507,28 @@ cudaError_t launch_implgemm(param_t param)
     const uint bn = 128;
     const uint bk = 8;
 
-    const uint NUM_THREADS = 128;
+    const uint NUM_THREADS = 256;
     
-    const uint wn = 64;
+    const uint wn = 32;
     const uint wm = 64;
-    const uint wniter = 4;
+    const uint wniter = 2;
     const uint tn = 4;
-    const uint tm = 8;
+    const uint tm = 4;
+    const uint oniter = 2;
     dim3 blockDim(NUM_THREADS);
 
     constexpr uint NUM_WARPS = NUM_THREADS / WARPSIZE;
 
     // warptile in threadblocktile
-    static_assert((bn % wn == 0) && (bm % wm == 0));
-    static_assert((bn / wn) * (bm / wm) == NUM_WARPS);
+    static_assert((bn % wn == 0) && (bm % wm == 0), "");
+    static_assert((bn / wn) * (bm / wm) == NUM_WARPS, "");
 
     // threads in warpsubtile
-    static_assert(( wm * wn) % (WARPSIZE * tm * tn * wniter) ==  0);
+    static_assert(( wm * wn) % (WARPSIZE * tm * tn * wniter) ==  0, "");
     
     constexpr uint wmiter = (wm * wn) / (WARPSIZE * tm * tn * wniter);
     // warpsubtile in warptile
-    static_assert((wm % wmiter == 0) && (wn % wniter == 0));
+    static_assert((wm % wmiter == 0) && (wn % wniter == 0), "");
 
     static_assert((NUM_THREADS * 4) % bk == 0,
                     "NUM_THREADS*4 must be multiple of K9_BK to avoid quantization "
@@ -498,6 +547,10 @@ cudaError_t launch_implgemm(param_t param)
     static_assert((bn * bk) % (4 * NUM_THREADS) == 0,
                     "BN*BK must be a multiple of 4*256 to vectorize loads");
 
+    static_assert((tm * tn * wniter * wmiter * NUM_THREADS) % ( 2 * bk * (bm+bn)) == 0,
+                    "total smem size (in # of floats) must be divisible by size of all regsister files holding outputs ");
+
+    static_assert(((tm * tn * wniter * wmiter * NUM_THREADS) / ( 2 * bk * (bm+bn))) % oniter == 0, "");
 
     int blockx = ((outh * outw + bm-1) / bm); // blockx  number
     int blocky = (k + bn-1) / bn;             // blocky  number
@@ -510,6 +563,6 @@ cudaError_t launch_implgemm(param_t param)
     int threadz = 1;   // threadz number per block
     dim3 block(threadx, thready, threadz);
     dim3 grid(blockx, blocky, blockz);
-    implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS><<<grid, block>>>(param);
+    implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, oniter><<<grid, block>>>(param);
     return cudaGetLastError();
 }
