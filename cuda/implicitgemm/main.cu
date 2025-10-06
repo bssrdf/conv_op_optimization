@@ -135,7 +135,7 @@ int main(int argc, char **argv)
     cudaEvent_t start, stop;
     float time_elapsed = 0.0;
 
-    int iternum = 20;    
+    int iternum = 0;    
     cudaEventCreate(&start, cudaEventBlockingSync);
     cudaEventCreate(&stop, cudaEventBlockingSync);
     cudaEventRecord(start, 0);

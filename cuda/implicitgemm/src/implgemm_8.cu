@@ -107,7 +107,7 @@ __global__ void implgemm(param_t param)
 
 // ldg
     const uint weight_sts_addr = innerRowA + innerColA * (BN+PAD) * 4;
-    for (uint offset = 0; offset + rowStrideA < BN; offset += rowStrideA) {
+    for (uint offset = 0; offset + rowStrideA <= BN; offset += rowStrideA) {
         if (by * BN  + innerRowA + offset < param.k &&  innerColA * 4 < param.c * param.r * param.s){
             float4 tmp = reinterpret_cast<float4 *>(&param.weight[(by * BN + innerRowA + offset) * weightKOffset + innerColA * 4])[0];
             smemweight[weight_sts_addr + offset +          0] = tmp.x;
@@ -122,6 +122,7 @@ __global__ void implgemm(param_t param)
         }
     }
 
+
     // int curC = (tx / 32) / (param.r * param.s);             // channel offset
     // int curR = ((tx / 32) % (param.r * param.s)) / param.s; // kernel r offset
     // int curS = ((tx / 32) % (param.r * param.s)) % param.s; // kernel s offset
@@ -131,15 +132,15 @@ __global__ void implgemm(param_t param)
     // int curC = ((tx % 2) * 4 % (param.s * param.c)) % param.c; // kernel s offset
     
     const uint input_sts_addr = innerRowA + innerColA * BM * 4;
-    for (uint offset = 0; offset + rowStrideA < BM; offset += rowStrideA) {
-        const uint posh_ori = fastdiv(bx * BM + innerRowA + offset, param.OW_fastdiv) * param.u - param.p;
-        const uint posw_ori = fastmodulo(bx * BM + innerRowA + offset, param.OW_fastdiv) * param.v - param.q;
+    for (uint offset = 0; offset + rowStrideA <= BM; offset += rowStrideA) {
+        const int posh_ori = fastdiv(bx * BM + innerRowA + offset, param.OW_fastdiv) * param.u - param.p;
+        const int posw_ori = fastmodulo(bx * BM + innerRowA + offset, param.OW_fastdiv) * param.v - param.q;
         const uint curR = fastdiv(innerColA * 4,  param.SC_fastdiv);             // channel offset
         const uint curS = fastdiv(fastmodulo(innerColA * 4, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
         const uint curC = fastmodulo(fastmodulo(innerColA * 4, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
 
-        const uint curH = posh_ori + curR; // input h
-        const uint curW = posw_ori + curS; // input w
+        const int curH = posh_ori + curR; // input h
+        const int curW = posw_ori + curS; // input w
         if (curH >= 0 && curW >= 0 && curW < param.w && curH < param.h){
             int inOffsetTmp = curH * inChannelOffset + curW * param.c + curC;
             float4 tmp = reinterpret_cast<float4 *>(&param.input[inOffset + inOffsetTmp])[0];
@@ -169,6 +170,23 @@ __global__ void implgemm(param_t param)
     // }
 
     __syncthreads();
+
+    // if(tx == 0 && bx == 0 && by == 0 && z == 0){
+    //     for(int i=0; i < 16; ++i)
+    //         printf("%f,\n",  smeminput[i]);
+    //     printf("\n");
+    // }
+
+    // if(tx == 0 && bx == 0 && by == 0 && z == 0){
+    //     printf("%u, %u, %u, %u \n",  innerRowA, innerColA, rowStrideA, weight_sts_addr);
+    //     for(int i=0; i < 16; ++i)
+    //         printf("%f,",  smemweight[i]);
+    //     printf("\n");
+    //     for(int i=0; i < 16; ++i)
+    //         printf("%f,",  param.weight[i*param.c*param.r*param.s]);
+    //     printf("\n");
+    // }
+
     // lds
     // int input_lds_addr = (warp_id % 2) * 64 + mma_tid_x * 4;
     const uint input_lds_addr =  mma_tid_x * WM;
@@ -295,13 +313,22 @@ __global__ void implgemm(param_t param)
                                         (wSubColIdx * TN) + resIdxN] +=
                                 input_frag[subcrs % 2][wSubRowIdx * TM + resIdxM] *
                                 weight_frag[subcrs % 2][wSubColIdx * TN + resIdxN];
+                            // if(tx == 0 && bx == 0 && by == 0 && z == 0){
+                            //     printf("subcrs:%d, i:%d, j:%d, %f * %f = %f, acc = %f\n", subcrs, wSubRowIdx * TM + resIdxM, wSubColIdx * TN + resIdxN,
+                            //         input_frag[subcrs % 2][wSubRowIdx * TM + resIdxM],
+                            //         weight_frag[subcrs % 2][wSubColIdx * TN + resIdxN],
+                            //         input_frag[subcrs % 2][wSubRowIdx * TM + resIdxM] *
+                            //         weight_frag[subcrs % 2][wSubColIdx * TN + resIdxN],
+                            //         output_frag[(wSubRowIdx * TM + resIdxM) * (WNITER * TN) +
+                            //             (wSubColIdx * TN) + resIdxN]);
+                            // }
                         }
                     }
                 }
             }
         }
         // ldg
-        for (uint offset = 0; offset + rowStrideA < BN; offset += rowStrideA) {
+        for (uint offset = 0; offset + rowStrideA <= BN; offset += rowStrideA) {
             if (by * BN  + innerRowA + offset < param.k &&  innerColA * 4 + crs + 8 < param.c * param.r * param.s){
                 float4 tmp = reinterpret_cast<float4 *>(&param.weight[(by * BN + innerRowA + offset) * weightKOffset + innerColA * 4 + crs + 8])[0];
                 smemweight[write_flag * (BN+PAD) * BK + weight_sts_addr + offset +          0] = tmp.x;
@@ -314,15 +341,15 @@ __global__ void implgemm(param_t param)
                     smemweight[weight_sts_addr + offset + i*(BN+PAD)] = 0.f;
             }
         }
-        for (uint offset = 0; offset + rowStrideA < BM; offset += rowStrideA) {
-            const uint posh_ori = fastdiv(bx * BM + innerRowA + offset, param.OW_fastdiv) * param.u - param.p;
-            const uint posw_ori = fastmodulo(bx * BM + innerRowA + offset, param.OW_fastdiv) * param.v - param.q;
+        for (uint offset = 0; offset + rowStrideA <= BM; offset += rowStrideA) {
+            const int posh_ori = fastdiv(bx * BM + innerRowA + offset, param.OW_fastdiv) * param.u - param.p;
+            const int posw_ori = fastmodulo(bx * BM + innerRowA + offset, param.OW_fastdiv) * param.v - param.q;
             const uint curR = fastdiv(innerColA * 4 + crs + 8,  param.SC_fastdiv);             // channel offset
             const uint curS = fastdiv(fastmodulo(innerColA * 4 + crs + 8, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
             const uint curC = fastmodulo(fastmodulo(innerColA * 4 + crs + 8, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
 
-            const uint curH = posh_ori + curR; // input h
-            const uint curW = posw_ori + curS; // input w
+            const int curH = posh_ori + curR; // input h
+            const int curW = posw_ori + curS; // input w
             if (curH >= 0 && curW >= 0 && curW < param.w && curH < param.h){
                 int inOffsetTmp = curH * inChannelOffset + curW * param.c + curC;
                 float4 tmp = reinterpret_cast<float4 *>(&param.input[inOffset + inOffsetTmp])[0];
@@ -393,6 +420,12 @@ __global__ void implgemm(param_t param)
 //             }
 //         }
     }
+
+    //   if(tx == 0 && bx == 0 && by == 0 && z == 0)
+    //   {
+    //       printf("output_frag:%f,%f,%f,%f\n",  output_frag[0], output_frag[1], output_frag[2], output_frag[3]);
+    //       printf("output_frag:%f,%f,%f,%f\n",  output_frag[4], output_frag[5], output_frag[6], output_frag[7]);
+    //   }
 
     // reuse smem
     float *smemoutput = reinterpret_cast<float *>(smem);
