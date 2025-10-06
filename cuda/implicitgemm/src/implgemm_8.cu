@@ -476,8 +476,8 @@ __global__ void implgemm(param_t param)
 //     }
     // uint32_t output_sts_addr = warp_id * 512 + mma_tid_y * 4 * 8 * 4 + mma_tid_x * 4;
     //     uint32_t output_lds_addr = warp_id * 512 + lane_id;
-    const uint m_idx = by * BN + mma_tid_y * WSUBN + threadColInWarp * WNITER_TN_OUTNITER;
-    const uint n_idx = bx * BM + mma_tid_x * WSUBM + threadRowInWarp * WMITER_TM_OUTMITER;
+    const uint m_idx = by * BN + mma_tid_y * WN + threadColInWarp * WNITER_TN_OUTNITER;
+    const uint n_idx = bx * BM + mma_tid_x * WM + threadRowInWarp * WMITER_TM_OUTMITER;
     const uint output_sts_addr = warp_id * WMITER_TM_OUTMITER * WNITER_TN_OUTNITER * WARPSIZE +
                         (threadRowInWarp * (WSUBN / TN)  + threadColInWarp) * WMITER_TM_OUTMITER * WNITER_TN_OUTNITER;
 #pragma unroll
