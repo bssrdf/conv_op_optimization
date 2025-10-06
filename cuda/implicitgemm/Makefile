@@ -1,9 +1,10 @@
 CC=nvcc
-TARGET := implgemm_1_1
+TARGET := implgemm_8
 
-CXXFLAGS += -arch=sm_60
+CXXFLAGS += -arch=sm_75
 INCLUDES  += -I./include
-LDFLAGS = -lcudnn 
+# LDFLAGS = -lcudnn
+LDFLAGS =
 
 # 定义源文件列表
 SRCS := ./src/$(TARGET).cu ./main.cu
@@ -11,7 +12,7 @@ SRCS := ./src/$(TARGET).cu ./main.cu
 #将对应的c文件名转为o文件后放在下面的CUR_OBJS变量中
 CUR_OBJS=${SRCS:.cu=.o}
 
-EXECUTABLE=implgemm
+EXECUTABLE=implgemm8
 
 all:$(EXECUTABLE)
 

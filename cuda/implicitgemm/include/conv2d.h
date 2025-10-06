@@ -1,3 +1,5 @@
+#include <cstdint>
+
 typedef struct __align__(16)
 {
     float*   input;                                   //输入数据地址
