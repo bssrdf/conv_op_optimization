@@ -6,6 +6,7 @@ typedef struct __align__(16)
     float*   weight;                                  //权值数据地址
     float*   bias;                                    //偏置值数据地址
     float*   output;                                  //输出数据地址
+    float*   interm;                                  //输出数据地址
     unsigned int      n;                              //batch szie              
     unsigned int      c;                              //channel number          
     unsigned int      h;                              //数据高                  
@@ -20,7 +21,7 @@ typedef struct __align__(16)
     unsigned int      Oh;                             //卷积结果高             
     unsigned int      Ow;                             //卷积结果宽 
     bool              nchw;
-
+    unsigned int      ksplit;                             //卷积结果宽 
     uint3 SC_fastdiv;    
     uint3 OW_fastdiv;
     uint3 C_fastdiv;
