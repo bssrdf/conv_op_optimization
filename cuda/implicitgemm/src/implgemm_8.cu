@@ -25,7 +25,7 @@ const int WARPSIZE = 32; // warpSize is not constexpr
  */
 template<const int BM, const int BN, const int BK, const int WM, const int WN,
           const int WNITER, const int TM, const int TN, const int NUM_THREADS,
-          const int OUTNITER, int PAD=4>
+          const int PAD=4>
 __global__ void implgemm(param_t param)
 {
     // __shared__ __align__(16 * 1024) char smem[24 * 1024];
@@ -172,8 +172,11 @@ __global__ void implgemm(param_t param)
     __syncthreads();
 
     // if(tx == 0 && bx == 0 && by == 0 && z == 0){
-    //     for(int i=0; i < 16; ++i)
-    //         printf("%f,\n",  smeminput[i]);
+    //     for(int i=0; i < 128; ++i)
+    //         printf("%.2f,",  smeminput[i]);
+    //     printf("\n");
+    //     for(int i=128; i < 256; ++i)
+    //         printf("%.2f,",  smeminput[i]);
     //     printf("\n");
     // }
 
@@ -329,8 +332,8 @@ __global__ void implgemm(param_t param)
         }
         // ldg
         for (uint offset = 0; offset + rowStrideA <= BN; offset += rowStrideA) {
-            if (by * BN  + innerRowA + offset < param.k &&  innerColA * 4 + crs + 8 < param.c * param.r * param.s){
-                float4 tmp = reinterpret_cast<float4 *>(&param.weight[(by * BN + innerRowA + offset) * weightKOffset + innerColA * 4 + crs + 8])[0];
+            if (by * BN  + innerRowA + offset < param.k &&  innerColA * 4 + crs + BK < param.c * param.r * param.s){
+                float4 tmp = reinterpret_cast<float4 *>(&param.weight[(by * BN + innerRowA + offset) * weightKOffset + innerColA * 4 + crs + BK])[0];
                 smemweight[write_flag * (BN+PAD) * BK + weight_sts_addr + offset +          0] = tmp.x;
                 smemweight[write_flag * (BN+PAD) * BK + weight_sts_addr + offset +   (BN+PAD)] = tmp.y;
                 smemweight[write_flag * (BN+PAD) * BK + weight_sts_addr + offset + 2*(BN+PAD)] = tmp.z;
@@ -338,15 +341,15 @@ __global__ void implgemm(param_t param)
             } else {
 #pragma unroll
                 for (int i = 0; i < 4; ++i)
-                    smemweight[weight_sts_addr + offset + i*(BN+PAD)] = 0.f;
+                    smemweight[write_flag * (BN+PAD) * BK + weight_sts_addr + offset + i*(BN+PAD)] = 0.f;
             }
         }
         for (uint offset = 0; offset + rowStrideA <= BM; offset += rowStrideA) {
             const int posh_ori = fastdiv(bx * BM + innerRowA + offset, param.OW_fastdiv) * param.u - param.p;
             const int posw_ori = fastmodulo(bx * BM + innerRowA + offset, param.OW_fastdiv) * param.v - param.q;
-            const uint curR = fastdiv(innerColA * 4 + crs + 8,  param.SC_fastdiv);             // channel offset
-            const uint curS = fastdiv(fastmodulo(innerColA * 4 + crs + 8, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
-            const uint curC = fastmodulo(fastmodulo(innerColA * 4 + crs + 8, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
+            const uint curR = fastdiv(innerColA * 4 + crs + BK,  param.SC_fastdiv);             // channel offset
+            const uint curS = fastdiv(fastmodulo(innerColA * 4 + crs + BK, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
+            const uint curC = fastmodulo(fastmodulo(innerColA * 4 + crs + BK, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
 
             const int curH = posh_ori + curR; // input h
             const int curW = posw_ori + curS; // input w
@@ -360,7 +363,7 @@ __global__ void implgemm(param_t param)
             } else {
 #pragma unroll
                 for (int i = 0; i < 4; ++i)
-                    smeminput[input_sts_addr + offset + i*BM] = 0.f;
+                    smeminput[write_flag * BM * BK + input_sts_addr + offset + i*BM] = 0.f;
             }
         }
         // sts
@@ -421,11 +424,36 @@ __global__ void implgemm(param_t param)
 //         }
     }
 
-    //   if(tx == 0 && bx == 0 && by == 0 && z == 0)
-    //   {
-    //       printf("output_frag:%f,%f,%f,%f\n",  output_frag[0], output_frag[1], output_frag[2], output_frag[3]);
-    //       printf("output_frag:%f,%f,%f,%f\n",  output_frag[4], output_frag[5], output_frag[6], output_frag[7]);
-    //   }
+    // if(tx == 59 && bx == 0 && by == 0 && z == 0){
+    //     for (int i = 0; i < WMITER * TM * WNITER * TN; ++i){
+    //         printf("%f,",  output_frag[i]);
+    //         if((i+1) % (WNITER * TN) == 0)
+    //             printf("\n");
+    //     }
+    //     printf("\n");
+    // }
+    // if(tx == 59 && bx == 0 && by == 0 && z == 0){
+    //     int cnt[3] = {0};
+    //     float values[3] = {-1.f};
+    //     for (int i = 0; i < WMITER * TM * WNITER * TN; ++i){
+    //         for(int j = 0; j < 3; j++){
+    //             if (output_frag[i] == values[j]){                    
+    //                 cnt[j]++;
+    //                 break;                    
+    //             } else{
+    //                 if (cnt[j] == 0){
+    //                     values[j] = output_frag[i];
+    //                     cnt[j]++;
+    //                     break;
+    //                 }
+    //             }          
+    //         }
+    //     }
+    //     for(int j = 0; j < 3; j++){
+    //         if(values[j] != -1.f)
+    //             printf("value: %f, cnt: %d \n", values[j], cnt[j]);
+    //     }
+    // }
 
     // reuse smem
     float *smemoutput = reinterpret_cast<float *>(smem);
@@ -437,9 +465,9 @@ __global__ void implgemm(param_t param)
     //     smembias[tx] = param.bias[by * BN + tx];
     // }
 
-    constexpr uint OUTMITER = (TM * TN * WNITER * WMITER * NUM_THREADS) / (2 * BK * (BM + BN)) / OUTNITER;
-    const uint WMITER_TM_OUTMITER = WMITER * TM / OUTMITER;
-    const uint WNITER_TN_OUTNITER = WNITER * TN / OUTNITER;
+    // constexpr uint OUTMITER = (TM * TN * WNITER * WMITER * NUM_THREADS) / (2 * BK * (BM + BN)) / OUTNITER;
+    // const uint WMITER_TM_OUTMITER = WMITER * TM / OUTMITER;
+    // const uint WNITER_TN_OUTNITER = WNITER * TN / OUTNITER;
 
 
 
@@ -474,44 +502,43 @@ __global__ void implgemm(param_t param)
 //             }
 //         }
 //     }
-    // uint32_t output_sts_addr = warp_id * 512 + mma_tid_y * 4 * 8 * 4 + mma_tid_x * 4;
-    //     uint32_t output_lds_addr = warp_id * 512 + lane_id;
-    const uint m_idx = by * BN + mma_tid_y * WN + threadColInWarp * WNITER_TN_OUTNITER;
-    const uint n_idx = bx * BM + mma_tid_x * WM + threadRowInWarp * WMITER_TM_OUTMITER;
-    const uint output_sts_addr = warp_id * WMITER_TM_OUTMITER * WNITER_TN_OUTNITER * WARPSIZE +
-                        (threadRowInWarp * (WSUBN / TN)  + threadColInWarp) * WMITER_TM_OUTMITER * WNITER_TN_OUTNITER;
+    const uint output_lds_addr = warp_id * WSUBM * WSUBN + lane_id;
+    // const uint m_idx = by * BN + mma_tid_y * WN + threadColInWarp * WNITER_TN_OUTNITER;
+    // const uint n_idx = bx * BM + mma_tid_x * WM + threadRowInWarp * WMITER_TM_OUTMITER;
+    // const uint output_sts_addr = warp_id * WMITER_TM_OUTMITER * WNITER_TN_OUTNITER * WARPSIZE +
+    //                     (threadRowInWarp * (WSUBN / TN)  + threadColInWarp) * WMITER_TM_OUTMITER * WNITER_TN_OUTNITER;
+    const uint output_sts_addr = mma_tid_x * BN / WN * TM * TN * WARPSIZE + mma_tid_y * TM * TN * WARPSIZE +
+                         threadColInWarp * TN * WSUBM + threadRowInWarp * TM;
+    const uint m_idx = by * BN + mma_tid_y * WN;
+    const uint n_idx = bx * BM + mma_tid_x * WM;
 #pragma unroll
-    for (int i = 0; i < OUTMITER; ++i)
+    for (int i = 0; i < WMITER; ++i)
     {
 #pragma unroll
-        for (int j = 0; j < OUTNITER; ++j)
+        for (int j = 0; j < WNITER; ++j)
         {
             __syncthreads();
 
 #pragma unroll
-            for (int subi = 0; subi < WMITER_TM_OUTMITER; ++subi)
+            for (int subi = 0; subi < TM; ++subi)
             {
 #pragma unroll
-                for (int subj = 0; subj < WNITER_TN_OUTNITER; ++subj)
+                for (int subj = 0; subj < TN; ++subj)
                 {
                     // output sts
-                    smemoutput[output_sts_addr + subi * WNITER_TN_OUTNITER + subj] =
-                        output_frag[(i * WMITER_TM_OUTMITER + subi) * (WNITER * TN) + j * WNITER_TN_OUTNITER + subj];
+                    smemoutput[output_sts_addr + subj * WSUBM + subi] =
+                        output_frag[(i * TM + subi) * (WNITER * TN) + j * TN + subj];
                 }
             }
             __syncthreads();
 
-#pragma unroll
-            for (int subi = 0; subi < WMITER_TM_OUTMITER; ++subi) {
-#pragma unroll
-                for (int subj = 0; subj < WNITER_TN_OUTNITER; ++subj){
-            // for (int subk = 0; subk < WMITER_TM_OUTMITER * WMITER_TN_OUTMITER; ++subk)
-                    const uint outOffset = z * param.k * param.Oh * param.Ow +
-                                (m_idx + subj) * param.Oh * param.Ow +
-                                n_idx + subi;
-                    if ((m_idx + subj) < param.k && (n_idx + subi) < param.Oh * param.Ow)
-                        param.output[outOffset] = smemoutput[output_sts_addr + subi * WNITER_TN_OUTNITER + subj];
-                }
+            for (int subk = 0; subk < TM * TN; ++subk){
+                const uint outOffset = z * param.k * param.Oh * param.Ow +
+                            (m_idx + j * WSUBN + (lane_id + subk * WARPSIZE) / WSUBM) * param.Oh * param.Ow +
+                            n_idx + i * WSUBM + lane_id;
+                if ((m_idx + j * WSUBN + (lane_id + subk * WARPSIZE) / WSUBM) < param.k &&
+                    (n_idx + i * WSUBM + lane_id) < param.Oh * param.Ow)
+                    param.output[outOffset] = smemoutput[output_lds_addr + subk * WARPSIZE];
             }
         }
     }
@@ -536,11 +563,11 @@ cudaError_t launch_implgemm(param_t param)
     int outh = (h - r + 2 * p) / u + 1;
     int outw = (w - s + 2 * q) / v + 1;    
 
-    const uint bm = 128;
+    const uint bm = 64;
     const uint bn = 128;
     const uint bk = 8;
 
-    const uint NUM_THREADS = 256;
+    const uint NUM_THREADS = 128;
     
     const uint wn = 32;
     const uint wm = 64;
@@ -580,10 +607,12 @@ cudaError_t launch_implgemm(param_t param)
     static_assert((bn * bk) % (4 * NUM_THREADS) == 0,
                     "BN*BK must be a multiple of 4*256 to vectorize loads");
 
-    static_assert((tm * tn * wniter * wmiter * NUM_THREADS) % ( 2 * bk * (bm+bn)) == 0,
-                    "total smem size (in # of floats) must be divisible by size of all regsister files holding outputs ");
+    // static_assert((tm * tn * wniter * wmiter * NUM_THREADS) % ( 2 * bk * (bm+bn)) == 0,
+    //                 "total smem size (in # of floats) must be divisible by size of all regsister files holding outputs ");
 
-    static_assert(((tm * tn * wniter * wmiter * NUM_THREADS) / ( 2 * bk * (bm+bn))) % oniter == 0, "");
+    // static_assert(((tm * tn * wniter * wmiter * NUM_THREADS) / ( 2 * bk * (bm+bn))) % oniter == 0, "");
+
+    static_assert(2 * bk * (bm+bn) >= tm * tn * NUM_THREADS, "shared memory size must be larger than register file size");
 
     int blockx = ((outh * outw + bm-1) / bm); // blockx  number
     int blocky = (k + bn-1) / bn;             // blocky  number
@@ -596,6 +625,6 @@ cudaError_t launch_implgemm(param_t param)
     int threadz = 1;   // threadz number per block
     dim3 block(threadx, thready, threadz);
     dim3 grid(blockx, blocky, blockz);
-    implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, oniter><<<grid, block>>>(param);
+    implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS><<<grid, block>>>(param);
     return cudaGetLastError();
 }
