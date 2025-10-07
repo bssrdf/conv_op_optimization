@@ -56,9 +56,9 @@ __global__ void implgemm(param_t param)
     constexpr uint WSUBN = WN / WNITER; // 32/2=16
 
     // Placement of the thread in the warp subtile
-    const uint threadIdxInWarp = tx % WARPSIZE;         // [0, 31]
-    const uint threadColInWarp = threadIdxInWarp % (WSUBN / TN); // i%(16/4)
-    const uint threadRowInWarp = threadIdxInWarp / (WSUBN / TN); // i/4
+    // const uint threadIdxInWarp = tx % WARPSIZE;         // [0, 31]
+    const uint threadColInWarp = lane_id % (WSUBN / TN); // i%(16/4)
+    const uint threadRowInWarp = lane_id / (WSUBN / TN); // i/4
 
     // int x = bx * BM + input_lds_addr;
     // int y = by * BN + weight_lds_addr;
@@ -563,11 +563,11 @@ cudaError_t launch_implgemm(param_t param)
     int outh = (h - r + 2 * p) / u + 1;
     int outw = (w - s + 2 * q) / v + 1;    
 
-    const uint bm = 64;
+    const uint bm = 128;
     const uint bn = 128;
     const uint bk = 8;
 
-    const uint NUM_THREADS = 128;
+    const uint NUM_THREADS = 256;
     
     const uint wn = 32;
     const uint wm = 64;
