@@ -176,7 +176,7 @@ int main(int argc, char **argv)
         int error = 0;
         for (int i = 0; i < n * k * outh * outw; i++){
         //    if(i < outh*outw)
-            printf(" postion:%d, gpuvalue:%f, cpuvalue:%f\n", i, output_host[i], output[i]);
+            // printf(" postion:%d, gpuvalue:%f, cpuvalue:%f\n", i, output_host[i], output[i]);
             if (abs(output_host[i] - output[i]) > getPrecision(output[i]))
             {
                 printf("error, postion:%d, gpuvalue:%f, cpuvalue:%f\n", i, output_host[i], output[i]);

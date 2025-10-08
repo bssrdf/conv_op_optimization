@@ -533,12 +533,13 @@ __global__ void implgemm(param_t param)
             __syncthreads();
 
             for (int subk = 0; subk < TM * TN; ++subk){
-                const uint outOffset = z * param.k * param.Oh * param.Ow +
-                            (m_idx + j * WSUBN + (lane_id + subk * WARPSIZE) / WSUBM) * param.Oh * param.Ow +
-                            n_idx + i * WSUBM + lane_id;
-                if ((m_idx + j * WSUBN + (lane_id + subk * WARPSIZE) / WSUBM) < param.k &&
-                    (n_idx + i * WSUBM + lane_id) < param.Oh * param.Ow)
+                const uint row =  m_idx + j * WSUBN + (lane_id + subk * WARPSIZE) / WSUBM;
+                const uint col =  n_idx + i * WSUBM + (lane_id + subk * WARPSIZE) % WSUBM;
+                if (row < param.k && col < param.Oh * param.Ow){
+                    const uint outOffset = z * param.k * param.Oh * param.Ow +
+                            row * param.Oh * param.Ow + col;
                     param.output[outOffset] = smemoutput[output_lds_addr + subk * WARPSIZE];
+                }
             }
         }
     }
