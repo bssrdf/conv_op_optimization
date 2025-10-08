@@ -271,7 +271,9 @@ __global__ void implgemm(param_t param)
 //                 weight_frag[(subcrs + 1) % 2][i] = smemweight[load_flag * (BN+4) * 8 + weight_lds_addr + (subcrs + 1) * (BN+4) + i];
 //                 weight_frag[(subcrs + 1) % 2][i + 4] = smemweight[load_flag * (BN+4) * 8 + weight_lds_addr + (subcrs + 1) * (BN+4) + i + 16];
 //             }
+#pragma unroll
             for (uint wSubColIdx = 0; wSubColIdx < WNITER; ++wSubColIdx)
+#pragma unroll
                 for (uint i = 0; i < TN; ++i)
                     weight_frag[(subcrs + 1) % 2][wSubColIdx * TN + i] = smemweight[load_flag * (BN+PAD) * BK +
                         (subcrs + 1) * (BN+PAD) + weight_lds_addr + wSubColIdx * WSUBN + threadColInWarp * TN + i];
@@ -292,7 +294,9 @@ __global__ void implgemm(param_t param)
 //                 input_frag[(subcrs + 1) % 2][i] = smeminput[load_flag * BM * 8 + input_lds_addr + (subcrs + 1) * BM + i];
 //                 input_frag[(subcrs + 1) % 2][i + 4] = smeminput[load_flag * BM * 8 + input_lds_addr + (subcrs + 1) * BM + i + 32];
 //             }
+#pragma unroll
             for (uint wSubRowIdx = 0; wSubRowIdx < WMITER; ++wSubRowIdx)
+#pragma unroll
                 for (uint i = 0; i < TM; ++i)
                     input_frag[(subcrs + 1) % 2][wSubRowIdx * TM + i] = smeminput[load_flag * BM * BK +
                         (subcrs + 1) * BM + input_lds_addr + wSubRowIdx * WSUBM + threadRowInWarp * TM + i];
@@ -307,10 +311,14 @@ __global__ void implgemm(param_t param)
 //                 }
 //             }
             // execute warptile matmul
+#pragma unroll
             for (uint wSubRowIdx = 0; wSubRowIdx < WMITER; ++wSubRowIdx) {
+#pragma unroll
                 for (uint wSubColIdx = 0; wSubColIdx < WNITER; ++wSubColIdx) {
                     // calculate per-thread results
+#pragma unroll
                     for (uint resIdxM = 0; resIdxM < TM; ++resIdxM) {
+#pragma unroll
                         for (uint resIdxN = 0; resIdxN < TN; ++resIdxN) {
                             output_frag[(wSubRowIdx * TM + resIdxM) * (WNITER * TN) +
                                         (wSubColIdx * TN) + resIdxN] +=
@@ -331,6 +339,7 @@ __global__ void implgemm(param_t param)
             }
         }
         // ldg
+#pragma unroll
         for (uint offset = 0; offset + rowStrideA <= BN; offset += rowStrideA) {
             if (by * BN  + innerRowA + offset < param.k &&  innerColA * 4 + crs + BK < param.c * param.r * param.s){
                 float4 tmp = reinterpret_cast<float4 *>(&param.weight[(by * BN + innerRowA + offset) * weightKOffset + innerColA * 4 + crs + BK])[0];
@@ -344,6 +353,7 @@ __global__ void implgemm(param_t param)
                     smemweight[write_flag * (BN+PAD) * BK + weight_sts_addr + offset + i*(BN+PAD)] = 0.f;
             }
         }
+#pragma unroll
         for (uint offset = 0; offset + rowStrideA <= BM; offset += rowStrideA) {
             const int posh_ori = fastdiv(bx * BM + innerRowA + offset, param.OW_fastdiv) * param.u - param.p;
             const int posw_ori = fastmodulo(bx * BM + innerRowA + offset, param.OW_fastdiv) * param.v - param.q;
@@ -377,13 +387,15 @@ __global__ void implgemm(param_t param)
         // }
         __syncthreads();
         write_flag ^= 1;
-
+#pragma unroll
         for (uint wSubRowIdx = 0; wSubRowIdx < WMITER; ++wSubRowIdx)
+#pragma unroll
             for (uint i = 0; i < TM; ++i)
                 input_frag[0][wSubRowIdx * TM + i] = smeminput[(load_flag ^ 1) * BM * BK +
                     input_lds_addr + wSubRowIdx * WSUBM + threadRowInWarp * TM + i];
-
+#pragma unroll
         for (uint wSubColIdx = 0; wSubColIdx < WNITER; ++wSubColIdx)
+#pragma unroll
             for (uint i = 0; i < TN; ++i)
                 weight_frag[0][wSubColIdx * TN + i] = smemweight[(load_flag ^ 1) * (BN+PAD) * BK +
                     weight_lds_addr + wSubColIdx * WSUBN + threadColInWarp * TN + i];
@@ -399,11 +411,14 @@ __global__ void implgemm(param_t param)
 //             input_frag[0][i] = smeminput[(load_flag ^ 1) * BM * 8 + input_lds_addr + i];
 //             input_frag[0][i + 4] = smeminput[(load_flag ^ 1) * BM * 8 + input_lds_addr + i + 32];
 //         }
-
+#pragma unroll
         for (uint wSubRowIdx = 0; wSubRowIdx < WMITER; ++wSubRowIdx) {
+#pragma unroll
             for (uint wSubColIdx = 0; wSubColIdx < WNITER; ++wSubColIdx) {
                 // calculate per-thread results
+#pragma unroll
                 for (uint resIdxM = 0; resIdxM < TM; ++resIdxM) {
+#pragma unroll
                     for (uint resIdxN = 0; resIdxN < TN; ++resIdxN) {
                         output_frag[(wSubRowIdx * TM + resIdxM) * (WNITER * TN) +
                                     (wSubColIdx * TN) + resIdxN] +=
@@ -531,7 +546,7 @@ __global__ void implgemm(param_t param)
                 }
             }
             __syncthreads();
-
+#pragma unroll
             for (int subk = 0; subk < TM * TN; ++subk){
                 const uint row =  m_idx + j * WSUBN + (lane_id + subk * WARPSIZE) / WSUBM;
                 const uint col =  n_idx + i * WSUBM + (lane_id + subk * WARPSIZE) % WSUBM;
