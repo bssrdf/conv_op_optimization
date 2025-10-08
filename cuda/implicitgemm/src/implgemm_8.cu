@@ -563,14 +563,14 @@ cudaError_t launch_implgemm(param_t param)
     int outh = (h - r + 2 * p) / u + 1;
     int outw = (w - s + 2 * q) / v + 1;    
 
-    const uint bm = 128;
+    const uint bm = 64;
     const uint bn = 128;
     const uint bk = 8;
 
-    const uint NUM_THREADS = 256;
+    const uint NUM_THREADS = 128;
     
-    const uint wn = 32;
-    const uint wm = 64;
+    const uint wn = 64;
+    const uint wm = 32;
     const uint wniter = 2;
     const uint tn = 4;
     const uint tm = 4;
