@@ -74,7 +74,7 @@ __global__ void implgemm(param_t param)
 
     
     int inOffset = z * param.c * param.h * param.w;
-    int weiOffset = (by * BN + tx / 8 * 4) * param.c * param.r * param.s;
+    // int weiOffset = (by * BN + tx / 8 * 4) * param.c * param.r * param.s;
     int inChannelOffset = param.c * param.w;
     // int weightChannelOffset = param.r * param.s;
     int weightKOffset = param.c * param.r * param.s;
@@ -101,9 +101,9 @@ __global__ void implgemm(param_t param)
     const uint innerRowA = tx / (BK / 4);
     const uint innerColA = tx % (BK / 4);
     constexpr uint rowStrideA = (NUM_THREADS * 4) / BK;
-    const uint innerRowB = tx / (BN / 4);
-    const uint innerColB = tx % (BN / 4);
-    constexpr uint rowStrideB = NUM_THREADS / (BN / 4);
+    // const uint innerRowB = tx / (BN / 4);
+    // const uint innerColB = tx % (BN / 4);
+    // constexpr uint rowStrideB = NUM_THREADS / (BN / 4);
 
 // ldg
     const uint weight_sts_addr = innerRowA + innerColA * (BN+PAD) * 4;
