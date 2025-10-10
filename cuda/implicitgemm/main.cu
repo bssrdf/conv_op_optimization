@@ -61,14 +61,14 @@ int main(int argc, char **argv)
 
     for (int i = 0; i < n * c * h * w; i++)
     {
-        // input[i] = (rand() % 255) / 255.0;
-        input[i] = 1.5f;
+        input[i] = (rand() % 255) / 255.0;
+        // input[i] = 1.5f;
     }
 
     for (int i = 0; i < k * c * r * s; i++)
     {
-        // weight[i] = (rand() % 255) / 255.0;
-        weight[i] = 2.0f;
+        weight[i] = (rand() % 255) / 255.0;
+        // weight[i] = 2.0f;
     }
     // for(int j= 0; j < k; j++){
     // for(int C= 0; C < c; C++){

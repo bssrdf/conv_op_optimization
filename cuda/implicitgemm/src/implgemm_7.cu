@@ -94,7 +94,7 @@ __global__ void implgemm(param_t param, const int ks)
     int tx = threadIdx.x;
     int bx = blockIdx.x;
     int by = blockIdx.y;
-    int bz = gridDim.z;
+    // int bz = gridDim.z;
 
     // Warp tile
     const int lane_id = threadIdx.x % 32;
@@ -115,7 +115,7 @@ __global__ void implgemm(param_t param, const int ks)
     float input_ldg_reg[4];
     // 当前线程处理的数据点在oh、ow上的坐标
     const unsigned int PQ = param.Oh * param.Ow;
-    const unsigned int n = (bx * 128 + tx / 2 ) / PQ;
+    int n = (bx * 128 + tx / 2 ) / PQ;
     const unsigned int npq_res = (bx * 128 + tx / 2 ) % PQ;
     int posh_ori = (npq_res / param.Ow) * param.u - param.p;
     int posw_ori = (npq_res % param.Ow) * param.v - param.q;
@@ -149,7 +149,7 @@ __global__ void implgemm(param_t param, const int ks)
 #pragma unroll
     for (int i = 0; i < 4; ++i)
     {
-        if (tx % 8 < weightKOffset && by * 128 + tx / 8 * 4 + i < param.k)
+        if (start_k + tx % 8 < weightKOffset && by * 128 + tx / 8 * 4 + i < param.k)
         {
             weight_ldg_reg[i] = param.weight[weiOffset + start_k + tx % 8 + i * weightKOffset];
             // if(tx == 0 && bx == 0 && by == 0 && z == 0)
@@ -188,6 +188,7 @@ __global__ void implgemm(param_t param, const int ks)
             input_ldg_reg[i] = 0.0;
     }
 
+
     // sts
     for (int i = 0; i < 4; ++i)
     {
@@ -199,6 +200,8 @@ __global__ void implgemm(param_t param, const int ks)
     }
 
     __syncthreads();
+
+
     // lds
 #pragma unroll
     for (int i = 0; i < 4; ++i)
@@ -235,7 +238,7 @@ __global__ void implgemm(param_t param, const int ks)
                 weight_ldg_reg[i] = 0.0;
             }
         }
-        
+
         curR = (crs + 8 + tx % 2 * 4) / (param.s * param.c);             // channel offset
         curS = ((crs + 8 + tx % 2 * 4) % (param.s * param.c)) / param.c; // kernel r offset
         curC = ((crs + 8 + tx % 2 * 4) % (param.s * param.c)) % param.c; // kernel s offset
@@ -327,6 +330,7 @@ __global__ void implgemm(param_t param, const int ks)
         }
     }
 
+
     // reuse smem
     float *smemoutput = reinterpret_cast<float *>(smem);
     // float *smembias = reinterpret_cast<float *>(smem + 16 * 1024);
@@ -343,6 +347,7 @@ __global__ void implgemm(param_t param, const int ks)
 
     uint32_t m_idx = blockIdx.y * 128 + warp_id / 2 * 32;
     uint32_t n_idx = blockIdx.x * 128 + warp_id % 2 * 64 + lane_id;
+    n = n_idx / PQ;
 
 #pragma unroll
     for (int i = 0; i < 2; ++i)
@@ -367,7 +372,7 @@ __global__ void implgemm(param_t param, const int ks)
 #pragma unroll
             for (int subk = 0; subk < 16; ++subk)
             {
-                int outOffset = z * param.n * param.k * param.Oh * param.Ow +  n * param.k * param.Oh * param.Ow  + (m_idx + i * 16 + subk) * param.Oh * param.Ow + (n_idx + j * 32) ;
+                int outOffset = z * param.n * param.k * param.Oh * param.Ow +  n * param.k * param.Oh * param.Ow  + (m_idx + i * 16 + subk) * param.Oh * param.Ow + (n_idx + j * 32);
                 if (n < param.n && (m_idx + i * 16 + subk) < param.k && (n_idx + j * 32) < param.Oh * param.Ow)
                     param.interm[outOffset] = smemoutput[output_lds_addr + subk * 32];
             }
