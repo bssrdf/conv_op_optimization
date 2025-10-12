@@ -87,7 +87,7 @@ static __global__ void reduce_f32(const float * __restrict__ x, float * __restri
 
 __global__ void implgemm(param_t param, const int ks)
 {
-    __shared__ __align__(16 * 1024) char smem[24 * 1024];
+    __shared__ __align__(16 * 1024) char smem[28 * 1024];
     float *smemweight = reinterpret_cast<float *>(smem);
     float *smeminput = reinterpret_cast<float *>(smem + 16 * 1024);
 
@@ -130,7 +130,7 @@ __global__ void implgemm(param_t param, const int ks)
     // sts addr
     int weight_sts_addr = (tx % 8) * 132 +
                           (tx / 8) * 4;
-    int input_sts_addr = tx / 2 + (tx % 2) * 128 * 4;
+    int input_sts_addr = tx / 2 + (tx % 2) * 132 * 4;
 
     int write_flag = 1;
     float weight_frag[2][8];
@@ -196,7 +196,7 @@ __global__ void implgemm(param_t param, const int ks)
     }
     for (int i = 0; i < 4; ++i)
     {
-        smeminput[input_sts_addr + i * 128] = input_ldg_reg[i];
+        smeminput[input_sts_addr + i * 132] = input_ldg_reg[i];
     }
 
     __syncthreads();
@@ -282,8 +282,8 @@ __global__ void implgemm(param_t param, const int ks)
 #pragma unroll
             for (int i = 0; i < 4; ++i)
             {
-                input_frag[(subcrs + 1) % 2][i] = smeminput[load_flag * 128 * 8 + input_lds_addr + (subcrs + 1) * 128 + i];
-                input_frag[(subcrs + 1) % 2][i + 4] = smeminput[load_flag * 128 * 8 + input_lds_addr + (subcrs + 1) * 128 + i + 32];
+                input_frag[(subcrs + 1) % 2][i] = smeminput[load_flag * 132 * 8 + input_lds_addr + (subcrs + 1) * 132 + i];
+                input_frag[(subcrs + 1) % 2][i + 4] = smeminput[load_flag * 132 * 8 + input_lds_addr + (subcrs + 1) * 132 + i + 32];
             }
 
 #pragma unroll
@@ -303,7 +303,7 @@ __global__ void implgemm(param_t param, const int ks)
         }
         for (int i = 0; i < 4; ++i)
         {
-            smeminput[write_flag * 128 * 8 + input_sts_addr + i * 128] = input_ldg_reg[i];
+            smeminput[write_flag * 132 * 8 + input_sts_addr + i * 132] = input_ldg_reg[i];
         }
         __syncthreads();
         write_flag ^= 1;
@@ -316,8 +316,8 @@ __global__ void implgemm(param_t param, const int ks)
 #pragma unroll
         for (int i = 0; i < 4; ++i)
         {
-            input_frag[0][i] = smeminput[(load_flag ^ 1) * 128 * 8 + input_lds_addr + i];
-            input_frag[0][i + 4] = smeminput[(load_flag ^ 1) * 128 * 8 + input_lds_addr + i + 32];
+            input_frag[0][i] = smeminput[(load_flag ^ 1) * 132 * 8 + input_lds_addr + i];
+            input_frag[0][i + 4] = smeminput[(load_flag ^ 1) * 132 * 8 + input_lds_addr + i + 32];
         }
 #pragma unroll
         for (int i = 0; i < 8; ++i)
