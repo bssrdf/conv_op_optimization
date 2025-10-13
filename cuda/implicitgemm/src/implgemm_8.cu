@@ -620,7 +620,7 @@ __global__ void implgemm(param_t param)
     const uint m_idx = by * BN + mma_tid_y * WN;
     const uint n_idx = bx * BM + mma_tid_x * WM;
 
-    const int n = (ksplit > 0) ? n_idx / PQ : z;
+    // const int n = (ksplit > 0) ? n_idx / PQ : z;
 
 #pragma unroll
     for (int i = 0; i < WMITER; ++i)
@@ -645,7 +645,10 @@ __global__ void implgemm(param_t param)
 #pragma unroll
             for (int subk = 0; subk < TM * TN; ++subk){
                 const uint row =  m_idx + j * WSUBN + (lane_id + subk * WARPSIZE) / WSUBM;
-                const uint col =  n_idx + i * WSUBM + (lane_id + subk * WARPSIZE) % WSUBM;
+                const uint gemm_i =  n_idx + i * WSUBM + (lane_id + subk * WARPSIZE) % WSUBM;
+                const int n = (ksplit > 0) ? gemm_i / PQ : z;
+                const int col = (ksplit > 0) ? gemm_i % PQ : gemm_i;
+
                 if (n < param.n && row < param.k && col < param.Oh * param.Ow){
                 //     int outOffset = z * param.n * param.k * param.Oh * param.Ow +  n * param.k * param.Oh * param.Ow  + (m_idx + i * 16 + subk) * param.Oh * param.Ow + (n_idx + j * 32);
                 // if (n < param.n && (m_idx + i * 16 + subk) < param.k && (n_idx + j * 32) < param.Oh * param.Ow)
@@ -745,7 +748,7 @@ cudaError_t launch_implgemm(param_t param)
     // static_assert(2 * bk * (bm+bn) >= tm * tn * NUM_THREADS, "shared memory size must be larger than register file size");
 
     if(ksplit > 0){
-        int blockx = ((n *outh * outw + bm-1) / bm); // blockx  number
+        int blockx = ((n * outh * outw + bm-1) / bm); // blockx  number
         int blocky = (k + bn-1) / bn;             // blocky  number
         // int blockx = ((outh * outw + 63) / 64); // blockx  number
         // int blocky = (k + 63) / 64;             // blocky  number
