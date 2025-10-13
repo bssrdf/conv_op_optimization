@@ -1,7 +1,7 @@
 CC=nvcc
 TARGET := implgemm_8
 
-CXXFLAGS += -arch=sm_75
+CXXFLAGS += -arch=sm_89
 INCLUDES  += -I./include
 # LDFLAGS = -lcudnn
 LDFLAGS =

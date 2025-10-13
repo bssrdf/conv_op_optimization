@@ -43,7 +43,8 @@ __global__ void implgemm(param_t param)
 {
     // __shared__ __align__(16 * 1024) char smem[24 * 1024];
 
-    __shared__ char smem[4*(2 * BM * BK +  2 * BK * (BN+PAD))];
+    // __shared__ char smem[4*(2 * BM * BK +  2 * BK * (BN+PAD))];
+    __shared__ char smem[4 * (TM*TN*NUM_THREADS <= (BM * BK +  BK * (BN+PAD)) ? (BM * BK +  BK * (BN+PAD)) : (TM*TN*NUM_THREADS))];
     // __shared__ float smeminput[2 * BM * BK];
     // __shared__ float smemweight[2 * BK * (BN+PAD)];
     float *smemweight = reinterpret_cast<float *>(smem);
@@ -684,15 +685,15 @@ cudaError_t launch_implgemm(param_t param)
     int outh = (h - r + 2 * p) / u + 1;
     int outw = (w - s + 2 * q) / v + 1;    
 
-    const uint bm = 64;
+    const uint bm = 256;
     const uint bn = 128;
     const uint bk = 8;
 
-    const uint NUM_THREADS = 128;
+    const uint NUM_THREADS = 256;
     
-    const uint wn = 64;
-    const uint wm = 32;
-    const uint wniter = 2;
+    const uint wn = 32;
+    const uint wm = 128;
+    const uint wniter = 1;
     const uint tn = 4;
     const uint tm = 4;
     const uint oniter = 2;
@@ -740,8 +741,8 @@ cudaError_t launch_implgemm(param_t param)
 
     // static_assert(((tm * tn * wniter * wmiter * NUM_THREADS) / ( 2 * bk * (bm+bn))) % oniter == 0, "");
 
-    static_assert(2 * bk * (bm+bn) >= tm * tn * NUM_THREADS, "shared memory size must be larger than register file size");
     const unsigned int nrows = n * k * outh * outw;
+    // static_assert(2 * bk * (bm+bn) >= tm * tn * NUM_THREADS, "shared memory size must be larger than register file size");
 
     if(ksplit > 0){
         int blockx = ((n *outh * outw + bm-1) / bm); // blockx  number
