@@ -827,22 +827,9 @@ cudaError_t launch_implgemm(param_t param)
                 implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, 0, true, true, kslit><<<grid, block>>>(param);
             else
                 implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, 0, false, false, kslit><<<grid, block>>>(param);
-                // implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, 0, c % 4 == 0, c % 4 == 0, kslit><<<grid, block>>>(param);
         } else{ // NCHW layout
-            if(w % 4 == 0 && s % 4 == 0)
-                implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, 1, true, true, kslit><<<grid, block>>>(param);
-            else if(w % 4 == 0)    
-                implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, 1, true, false, kslit><<<grid, block>>>(param);
-            else if(s % 4 == 0)      
-                implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, 1, false, true, kslit><<<grid, block>>>(param);
-            else       
-                implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, 1, false, false, kslit><<<grid, block>>>(param);
-                // implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, 1, w % 4 == 0, s % 4 == 0, kslit><<<grid, block>>>(param);
+            implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, 1, false, false, kslit><<<grid, block>>>(param);
         }
-        // if(c % 4 == 0)
-        //     implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, true, kslit><<<grid, block>>>(param);
-        // else
-        //     implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, false, kslit><<<grid, block>>>(param);
         blockx = (nrows + 511) / 512;
         const dim3 block_nums(blockx, 1, 1);
         const dim3 block_dims(512, 1, 1);
@@ -865,14 +852,7 @@ cudaError_t launch_implgemm(param_t param)
             else
                 implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, 0, false, false, 0><<<grid, block>>>(param);
         } else{ // NCHW layout
-            if(w % 4 == 0 && s % 4 == 0)
-                implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, 1, true, true, 0><<<grid, block>>>(param);
-            else if(w % 4 == 0)    
-                implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, 1, true, false, 0><<<grid, block>>>(param);
-            else if(s % 4 == 0)      
-                implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, 1, false, true, 0><<<grid, block>>>(param);
-            else       
-                implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, 1, false, false, 0><<<grid, block>>>(param);
+            implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, 1, false, false, 0><<<grid, block>>>(param);
         }
         
     }
