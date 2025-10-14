@@ -61,6 +61,10 @@ if ! (( WM % WM_ITER == 0 && WN % WN_ITER == 0 )); then
   echo "Error: WM % WM_ITER must be 0 and WN % WN_ITER must be 0."
   continue
 fi
+if ! (( (WM / WM_ITER) % TM == 0 && (WN / WN_ITER) % TN == 0 )); then
+  echo "Error: WSUBM % TM must be 0 and WSUBN % TN must be 0."
+  continue
+fi
 if ! (( (NUM_THREADS * 4) % BK == 0 )); then
   echo "Error: (NUM_THREADS * 4) % BK must be 0."
   continue

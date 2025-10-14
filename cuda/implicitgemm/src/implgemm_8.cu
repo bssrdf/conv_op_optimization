@@ -751,9 +751,9 @@ cudaError_t launch_implgemm(param_t param)
     
     const uint wn = 256;
     const uint wm = 32;
-    const uint wniter = 1;
-    const uint tn = 4;
-    const uint tm = 8;
+    const uint wniter = 1; // =1 answer is wrong
+    const uint tn = 8;
+    const uint tm = 4;
     const uint oniter = 2;
 
     const uint kslit = 8;
@@ -772,6 +772,8 @@ cudaError_t launch_implgemm(param_t param)
     constexpr uint wmiter = (wm * wn) / (WARPSIZE * tm * tn * wniter);
     // warpsubtile in warptile
     static_assert((wm % wmiter == 0) && (wn % wniter == 0), "");
+
+    static_assert(((wm / wmiter) % tm == 0 ) && ((wn / wniter) % tn == 0), "");
 
     static_assert((NUM_THREADS * 4) % bk == 0,
                     "NUM_THREADS*4 must be multiple of K9_BK to avoid quantization "
