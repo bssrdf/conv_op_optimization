@@ -22,11 +22,14 @@ typedef struct __align__(16)
     unsigned int      Ow;                             //卷积结果宽 
     bool              nchw;
     unsigned int      ksplit;                             //卷积结果宽 
-    uint3 SC_fastdiv;    
+    uint3 SC_fastdiv;
     uint3 OW_fastdiv;
     uint3 C_fastdiv;
-    uint3 RS_fastdiv;    
+    uint3 RS_fastdiv;
     uint3 S_fastdiv;
+    unsigned int pad;
+    unsigned int pad1;
+    unsigned int pad2;
     // uint3 pad;
     // uint3 pad1;
 }param_t;

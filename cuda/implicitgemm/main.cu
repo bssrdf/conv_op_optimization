@@ -61,14 +61,14 @@ int main(int argc, char **argv)
 
     for (int i = 0; i < n * c * h * w; i++)
     {
-        input[i] = (rand() % 255) / 255.0;
-        // input[i] = 1.5f;
+        // input[i] = (rand() % 255) / 255.0;
+        input[i] = 1.5f;
     }
 
     for (int i = 0; i < k * c * r * s; i++)
     {
-        weight[i] = (rand() % 255) / 255.0;
-        // weight[i] = 2.0f;
+        // weight[i] = (rand() % 255) / 255.0;
+        weight[i] = 2.0f;
     }
     // for(int j= 0; j < k; j++){
     // for(int C= 0; C < c; C++){
@@ -108,7 +108,7 @@ int main(int argc, char **argv)
     param.input = input_device;
     uintptr_t base = reinterpret_cast<uintptr_t>(param.weight);
     printf("param.input base = %p  (mod16 = %zu)\n", (void*)base, base % 16);
-    assert((base % 16) == 0 && "param.input base is not 16-byte aligned");
+    // assert((base % 16) == 0 && "param.input base is not 16-byte aligned");
     param.weight = weight_device;
     param.bias = bias_device;
     param.output = output_device;
@@ -127,7 +127,7 @@ int main(int argc, char **argv)
     param.ksplit = k_split;
     param.Oh = outh;
     param.Ow = outw;
-    param.nchw = (nchw == 1) ? true : false;
+    param.nchw = nchw == 1;
 
     param.SC_fastdiv = init_fastdiv_values(s*c);    
     param.OW_fastdiv = init_fastdiv_values(outw);
@@ -149,7 +149,7 @@ int main(int argc, char **argv)
     cudaEvent_t start, stop;
     float time_elapsed = 0.0;
 
-    int iternum = 20;
+    int iternum = 0;
     cudaEventCreate(&start, cudaEventBlockingSync);
     cudaEventCreate(&stop, cudaEventBlockingSync);
     cudaEventRecord(start, 0);

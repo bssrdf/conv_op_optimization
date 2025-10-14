@@ -751,7 +751,7 @@ cudaError_t launch_implgemm(param_t param)
     
     const uint wn = 256;
     const uint wm = 32;
-    const uint wniter = 8;
+    const uint wniter = 1;
     const uint tn = 4;
     const uint tm = 8;
     const uint oniter = 2;
