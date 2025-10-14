@@ -25,8 +25,10 @@ typedef struct __align__(16)
     uint3 SC_fastdiv;    
     uint3 OW_fastdiv;
     uint3 C_fastdiv;
-    uint3 pad;
-    uint3 pad1;
+    uint3 RS_fastdiv;    
+    uint3 S_fastdiv;
+    // uint3 pad;
+    // uint3 pad1;
 }param_t;
 // void launch_implgemm(param_t param);
 

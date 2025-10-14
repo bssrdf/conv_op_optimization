@@ -36,9 +36,14 @@ static __global__ void reduce_f32(const float * __restrict__ x, float * __restri
  * @tparam TM The per-thread tile size for M dimension.
  * @tparam TN The per-thread tile size for N dimension.
  */
+
+
+
 template<const int BM, const int BN, const int BK, const int WM, const int WN,
           const int WNITER, const int TM, const int TN, const int NUM_THREADS,
-          const bool vec_load, const int ksplit, const int PAD=4>
+          // layout: 0, NHWC; 1, NCHW
+          const int layout, const bool vec_load_a, const bool vec_load_b,
+          const int ksplit, const int PAD=4>
 __global__ void implgemm(param_t param)
 {
     // __shared__ __align__(16 * 1024) char smem[24 * 1024];
@@ -92,7 +97,7 @@ __global__ void implgemm(param_t param)
     
     // int inOffset = (ksplit > 0):  z * param.c * param.h * param.w ;
     // int weiOffset = (by * BN + tx / 8 * 4) * param.c * param.r * param.s;
-    int inChannelOffset = param.c * param.w;
+    int inChannelOffset = layout == 0 ? param.c * param.w : param.h * param.w;
     // int weightChannelOffset = param.r * param.s;
     int weightKOffset = param.c * param.r * param.s;
 
@@ -138,7 +143,7 @@ __global__ void implgemm(param_t param)
 // ldg
     const uint weight_sts_addr = innerRowA + innerColA * (BN+PAD) * 4;
     for (uint offset = 0; offset + rowStrideA <= BN; offset += rowStrideA) {
-        if(vec_load){
+        if(vec_load_b){
             // if (by * BN  + innerRowA + offset < param.k &&  start_k + innerColA * 4 < param.c * param.r * param.s){
                 if (by * BN  + innerRowA + offset < param.k &&   start_k + innerColA * 4 < end_k){
                 float4 tmp = reinterpret_cast<float4 *>(&param.weight[(by * BN + innerRowA + offset) * weightKOffset + start_k + innerColA * 4])[0];
@@ -181,15 +186,24 @@ __global__ void implgemm(param_t param)
         const int posh_ori = fastdiv((ksplit > 0) ? npq_res: bx * BM + innerRowA + offset, param.OW_fastdiv) * param.u - param.p;
         const int posw_ori = fastmodulo((ksplit > 0) ? npq_res: bx * BM + innerRowA + offset, param.OW_fastdiv) * param.v - param.q;
         int inOffset = n * param.c * param.h * param.w ;
-        if(vec_load){
-            const uint curR = fastdiv(start_k + innerColA * 4,  param.SC_fastdiv);             // channel offset
-            const uint curS = fastdiv(fastmodulo(start_k + innerColA * 4, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
-            const uint curC = fastmodulo(fastmodulo(start_k + innerColA * 4, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
-
+        if(vec_load_a){
+            const uint cur0 = fastdiv(start_k + innerColA * 4,  
+                   layout == 0 ? param.SC_fastdiv : param.RS_fastdiv);             // channel offset
+            const uint cur1 = fastdiv(fastmodulo(start_k + innerColA * 4, 
+                layout == 0 ? param.SC_fastdiv : param.RS_fastdiv),  
+                layout == 0 ? param.C_fastdiv  : param.S_fastdiv); // kernel r offset
+            const uint cur2 = fastmodulo(fastmodulo(start_k + innerColA * 4, 
+                layout == 0 ? param.SC_fastdiv : param.RS_fastdiv),  
+                layout == 0 ? param.C_fastdiv  : param.S_fastdiv); // kernel r offset
+            const uint curC = layout == 0 ? cur2 : cur0;
+            const uint curR = layout == 0 ? cur0 : cur1;
+            const uint curS = layout == 0 ? cur1 : cur2;
             const int curH = posh_ori + curR; // input h
             const int curW = posw_ori + curS; // input w
             if (curH >= 0 && curW >= 0 && curW < param.w && curH < param.h && start_k + innerColA * 4 < end_k){
-                int inOffsetTmp = curH * inChannelOffset + curW * param.c + curC;
+                int inOffsetTmp = layout == 0 ? 
+                                curH * inChannelOffset + curW * param.c + curC:
+                                curC * inChannelOffset + curH * param.w + curW;
                 float4 tmp = reinterpret_cast<float4 *>(&param.input[inOffset + inOffsetTmp])[0];
                 smeminput[input_sts_addr + offset +     0] = tmp.x;
                 smeminput[input_sts_addr + offset +    BM] = tmp.y;
@@ -203,14 +217,28 @@ __global__ void implgemm(param_t param)
         } else {
             #pragma unroll
             for (int i = 0; i < 4; ++i){
-                const uint curR = fastdiv(start_k + innerColA * 4 + i,  param.SC_fastdiv);             // channel offset
-                const uint curS = fastdiv(fastmodulo(start_k + innerColA * 4 + i, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
-                const uint curC = fastmodulo(fastmodulo(start_k + innerColA * 4 + i, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
+                const uint cur0 = fastdiv(start_k + innerColA * 4 + i,  
+                    layout == 0 ? param.SC_fastdiv : param.RS_fastdiv);             // channel offset
+                const uint cur1 = fastdiv(fastmodulo(start_k + innerColA * 4 + i, 
+                    layout == 0 ? param.SC_fastdiv : param.RS_fastdiv),  
+                    layout == 0 ? param.C_fastdiv  : param.S_fastdiv); // kernel r offset
+                const uint cur2 = fastmodulo(fastmodulo(start_k + innerColA * 4 + i, 
+                    layout == 0 ? param.SC_fastdiv : param.RS_fastdiv),  
+                    layout == 0 ? param.C_fastdiv  : param.S_fastdiv); // kernel r offset
+                const uint curC = layout == 0 ? cur2 : cur0;
+                const uint curR = layout == 0 ? cur0 : cur1;
+                const uint curS = layout == 0 ? cur1 : cur2;
+                // const uint curR = fastdiv(start_k + innerColA * 4 + i,  param.SC_fastdiv);             // channel offset
+                // const uint curS = fastdiv(fastmodulo(start_k + innerColA * 4 + i, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
+                // const uint curC = fastmodulo(fastmodulo(start_k + innerColA * 4 + i, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
 
                 const int curH = posh_ori + curR; // input h
                 const int curW = posw_ori + curS; // input w
                 if (curH >= 0 && curW >= 0 && curW < param.w && curH < param.h && start_k + innerColA * 4 + i < end_k){
-                    int inOffsetTmp = curH * inChannelOffset + curW * param.c + curC;
+                    // int inOffsetTmp = curH * inChannelOffset + curW * param.c + curC;
+                    int inOffsetTmp = layout == 0 ? 
+                                curH * inChannelOffset + curW * param.c + curC:
+                                curC * inChannelOffset + curH * param.w + curW;
                     smeminput[input_sts_addr + offset + i*BM] = param.input[inOffset + inOffsetTmp];
                 } else {
                     smeminput[input_sts_addr + offset + i*BM] = 0.f;
@@ -401,7 +429,7 @@ __global__ void implgemm(param_t param)
         // ldg
 #pragma unroll
         for (uint offset = 0; offset + rowStrideA <= BN; offset += rowStrideA) {
-            if(vec_load){
+            if(vec_load_b){
                 if (by * BN  + innerRowA + offset < param.k &&  innerColA * 4 + crs + BK < end_k){
                     float4 tmp = reinterpret_cast<float4 *>(&param.weight[(by * BN + innerRowA + offset) * weightKOffset + innerColA * 4 + crs + BK])[0];
                     smemweight[write_flag * (BN+PAD) * BK + weight_sts_addr + offset +          0] = tmp.x;
@@ -432,15 +460,28 @@ __global__ void implgemm(param_t param)
             const int posh_ori = fastdiv((ksplit > 0) ? npq_res: bx * BM + innerRowA + offset, param.OW_fastdiv) * param.u - param.p;
             const int posw_ori = fastmodulo((ksplit > 0) ? npq_res: bx * BM + innerRowA + offset, param.OW_fastdiv) * param.v - param.q;
             int inOffset = n * param.c * param.h * param.w ;
-            if(vec_load){
-                const uint curR = fastdiv(innerColA * 4 + crs + BK,  param.SC_fastdiv);             // channel offset
-                const uint curS = fastdiv(fastmodulo(innerColA * 4 + crs + BK, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
-                const uint curC = fastmodulo(fastmodulo(innerColA * 4 + crs + BK, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
-
+            if(vec_load_a){
+                // const uint curR = fastdiv(innerColA * 4 + crs + BK,  param.SC_fastdiv);             // channel offset
+                // const uint curS = fastdiv(fastmodulo(innerColA * 4 + crs + BK, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
+                // const uint curC = fastmodulo(fastmodulo(innerColA * 4 + crs + BK, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
+                const uint cur0 = fastdiv(innerColA * 4 + crs + BK,  
+                    layout == 0 ? param.SC_fastdiv : param.RS_fastdiv);             // channel offset
+                const uint cur1 = fastdiv(fastmodulo(innerColA * 4 + crs + BK, 
+                    layout == 0 ? param.SC_fastdiv : param.RS_fastdiv),  
+                    layout == 0 ? param.C_fastdiv  : param.S_fastdiv); // kernel r offset
+                const uint cur2 = fastmodulo(fastmodulo(innerColA * 4 + crs + BK, 
+                    layout == 0 ? param.SC_fastdiv : param.RS_fastdiv),  
+                    layout == 0 ? param.C_fastdiv  : param.S_fastdiv); // kernel r offset
+                const uint curC = layout == 0 ? cur2 : cur0;
+                const uint curR = layout == 0 ? cur0 : cur1;
+                const uint curS = layout == 0 ? cur1 : cur2;
                 const int curH = posh_ori + curR; // input h
                 const int curW = posw_ori + curS; // input w
                 if (curH >= 0 && curW >= 0 && curW < param.w && curH < param.h && innerColA * 4 + crs + BK < end_k){
-                    int inOffsetTmp = curH * inChannelOffset + curW * param.c + curC;
+                    // int inOffsetTmp = curH * inChannelOffset + curW * param.c + curC;
+                    int inOffsetTmp = layout == 0 ? 
+                                curH * inChannelOffset + curW * param.c + curC:
+                                curC * inChannelOffset + curH * param.w + curW;
                     float4 tmp = reinterpret_cast<float4 *>(&param.input[inOffset + inOffsetTmp])[0];
                     smeminput[write_flag * BM * BK + input_sts_addr + offset +     0] = tmp.x;
                     smeminput[write_flag * BM * BK + input_sts_addr + offset +    BM] = tmp.y;
@@ -454,14 +495,27 @@ __global__ void implgemm(param_t param)
             } else {
                 #pragma unroll
                 for (int i = 0; i < 4; ++i){
-                    const uint curR = fastdiv(innerColA * 4 + crs + BK + i,  param.SC_fastdiv);             // channel offset
-                    const uint curS = fastdiv(fastmodulo(innerColA * 4 + crs + BK + i, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
-                    const uint curC = fastmodulo(fastmodulo(innerColA * 4 + crs + BK + i, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
-
+                    // const uint curR = fastdiv(innerColA * 4 + crs + BK + i,  param.SC_fastdiv);             // channel offset
+                    // const uint curS = fastdiv(fastmodulo(innerColA * 4 + crs + BK + i, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
+                    // const uint curC = fastmodulo(fastmodulo(innerColA * 4 + crs + BK + i, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
+                    const uint cur0 = fastdiv(innerColA * 4 + crs + BK + i,  
+                        layout == 0 ? param.SC_fastdiv : param.RS_fastdiv);             // channel offset
+                    const uint cur1 = fastdiv(fastmodulo(innerColA * 4 + crs + BK + i, 
+                        layout == 0 ? param.SC_fastdiv : param.RS_fastdiv),  
+                        layout == 0 ? param.C_fastdiv  : param.S_fastdiv); // kernel r offset
+                    const uint cur2 = fastmodulo(fastmodulo(innerColA * 4 + crs + BK + i, 
+                        layout == 0 ? param.SC_fastdiv : param.RS_fastdiv),  
+                        layout == 0 ? param.C_fastdiv  : param.S_fastdiv); // kernel r offset
+                    const uint curC = layout == 0 ? cur2 : cur0;
+                    const uint curR = layout == 0 ? cur0 : cur1;
+                    const uint curS = layout == 0 ? cur1 : cur2;
                     const int curH = posh_ori + curR; // input h
                     const int curW = posw_ori + curS; // input w
                     if (curH >= 0 && curW >= 0 && curW < param.w && curH < param.h && innerColA * 4 + crs + BK + i < end_k){
-                        int inOffsetTmp = curH * inChannelOffset + curW * param.c + curC;
+                        // int inOffsetTmp = curH * inChannelOffset + curW * param.c + curC;
+                        int inOffsetTmp = layout == 0 ? 
+                                curH * inChannelOffset + curW * param.c + curC:
+                                curC * inChannelOffset + curH * param.w + curW;
                         smeminput[write_flag * BM * BK + input_sts_addr + offset + i*BM] = param.input[inOffset + inOffsetTmp];
                     } else {
                         smeminput[write_flag * BM * BK + input_sts_addr + offset + i*BM] = 0.f;
@@ -683,6 +737,7 @@ cudaError_t launch_implgemm(param_t param)
     unsigned int v = param.v;
     unsigned int p = param.p;
     unsigned int q = param.q;
+    const bool nchw = param.nchw;
     const int ksplit = param.ksplit;
 
     int outh = (h - r + 2 * p) / u + 1;
@@ -746,6 +801,12 @@ cudaError_t launch_implgemm(param_t param)
 
     const unsigned int nrows = n * k * outh * outw;
     // static_assert(2 * bk * (bm+bn) >= tm * tn * NUM_THREADS, "shared memory size must be larger than register file size");
+    // int device = 0;
+    // cudaDeviceProp prop;
+    // cudaGetDeviceProperties(&prop, device);
+
+    // printf("Shared memory per block: %zu bytes\n", prop.sharedMemPerBlock);
+    // printf("Number of SMs: %zu \n", prop.multiProcessorCount);
 
     if(ksplit > 0){
         int blockx = ((n * outh * outw + bm-1) / bm); // blockx  number
@@ -759,10 +820,27 @@ cudaError_t launch_implgemm(param_t param)
         int threadz = 1;   // threadz number per block
         dim3 block(threadx, thready, threadz);
         dim3 grid(blockx, blocky, blockz);
-        if(c % 4 == 0)
-            implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, true, kslit><<<grid, block>>>(param);
-        else
-            implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, false, kslit><<<grid, block>>>(param);
+        if(!nchw){ // NHWC layout
+            if( c % 4 == 0 )
+                implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, 0, true, true, kslit><<<grid, block>>>(param);
+            else
+                implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, 0, false, false, kslit><<<grid, block>>>(param);
+                // implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, 0, c % 4 == 0, c % 4 == 0, kslit><<<grid, block>>>(param);
+        } else{ // NCHW layout
+            if(w % 4 == 0 && s % 4 == 0)
+                implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, 1, true, true, kslit><<<grid, block>>>(param);
+            else if(w % 4 == 0)    
+                implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, 1, true, false, kslit><<<grid, block>>>(param);
+            else if(s % 4 == 0)      
+                implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, 1, false, true, kslit><<<grid, block>>>(param);
+            else       
+                implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, 1, false, false, kslit><<<grid, block>>>(param);
+                // implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, 1, w % 4 == 0, s % 4 == 0, kslit><<<grid, block>>>(param);
+        }
+        // if(c % 4 == 0)
+        //     implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, true, kslit><<<grid, block>>>(param);
+        // else
+        //     implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, false, kslit><<<grid, block>>>(param);
         blockx = (nrows + 511) / 512;
         const dim3 block_nums(blockx, 1, 1);
         const dim3 block_dims(512, 1, 1);
@@ -779,10 +857,22 @@ cudaError_t launch_implgemm(param_t param)
         int threadz = 1;   // threadz number per block
         dim3 block(threadx, thready, threadz);
         dim3 grid(blockx, blocky, blockz);
-        if(c % 4 == 0)
-            implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, true, 0><<<grid, block>>>(param);
-        else
-            implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, false, 0><<<grid, block>>>(param);
+        if(!nchw){ // NHWC layout
+            if( c % 4 == 0 )
+                implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, 0, true, true, 0><<<grid, block>>>(param);
+            else
+                implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, 0, false, false, 0><<<grid, block>>>(param);
+        } else{ // NCHW layout
+            if(w % 4 == 0 && s % 4 == 0)
+                implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, 1, true, true, 0><<<grid, block>>>(param);
+            else if(w % 4 == 0)    
+                implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, 1, true, false, 0><<<grid, block>>>(param);
+            else if(s % 4 == 0)      
+                implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, 1, false, true, 0><<<grid, block>>>(param);
+            else       
+                implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, 1, false, false, 0><<<grid, block>>>(param);
+        }
+        
     }
     return cudaGetLastError();
 }

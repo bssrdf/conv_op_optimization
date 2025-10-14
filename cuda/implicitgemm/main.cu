@@ -132,6 +132,8 @@ int main(int argc, char **argv)
     param.SC_fastdiv = init_fastdiv_values(s*c);    
     param.OW_fastdiv = init_fastdiv_values(outw);
     param.C_fastdiv = init_fastdiv_values(c);
+    param.RS_fastdiv = init_fastdiv_values(r*s);    
+    param.S_fastdiv = init_fastdiv_values(s);
 
     printf("launch implgemm, n:%d, c:%d, h:%d, w:%d, k:%d, r:%d, s:%d, u:%d, v:%d, p:%d, q:%d, outh:%d, outw:%d\n",
            n, c, h, w, k, r, s, u, v, p, q, outh, outw);
