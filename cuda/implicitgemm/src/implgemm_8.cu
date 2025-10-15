@@ -10,7 +10,7 @@
 */
 
 typedef unsigned int uint;
-const int WARPSIZE = 32; // warpSize is not constexpr
+constexpr uint WARPSIZE = 32; // warpSize is not constexpr
 
 static __global__ void reduce_f32(const float * __restrict__ x, float * __restrict__ dst, const int ncols, const int nrows) {
     const int row = blockIdx.x;
@@ -281,14 +281,18 @@ __global__ void implgemm(param_t param)
     // lds
     // int input_lds_addr = (warp_id % 2) * 64 + mma_tid_x * 4;
     const uint input_lds_addr =  mma_tid_x * WM;
+#pragma unroll
     for (uint wSubRowIdx = 0; wSubRowIdx < WMITER; ++wSubRowIdx)
+#pragma unroll
       for (uint i = 0; i < TM; ++i)
         input_frag[0][wSubRowIdx * TM + i] = smeminput[input_lds_addr + wSubRowIdx * WSUBM +
                                threadRowInWarp * TM + i];
 
     // int weight_lds_addr = (warp_id / 2) * 32 + mma_tid_y * 4;
     const uint weight_lds_addr = mma_tid_y * WN;
+#pragma unroll
     for (uint wSubColIdx = 0; wSubColIdx < WNITER; ++wSubColIdx)
+#pragma unroll
       for (uint i = 0; i < TN; ++i)
         weight_frag[0][wSubColIdx * TN + i] = smemweight[weight_lds_addr + wSubColIdx * WSUBN +
                              threadColInWarp * TN + i];
@@ -744,15 +748,15 @@ cudaError_t launch_implgemm(param_t param)
     int outw = (w - s + 2 * q) / v + 1;    
 
     const uint bm = 128;
-    const uint bn = 256;
+    const uint bn = 128;
     const uint bk = 8;
 
-    const uint NUM_THREADS = 128;
+    const uint NUM_THREADS = 256;
     
-    const uint wn = 256;
-    const uint wm = 32;
-    const uint wniter = 1; // =1 answer is wrong
-    const uint tn = 8;
+    const uint wn = 32;
+    const uint wm = 64;
+    const uint wniter = 2; // =1 answer is wrong
+    const uint tn = 4;
     const uint tm = 4;
     const uint oniter = 2;
 
@@ -854,7 +858,6 @@ cudaError_t launch_implgemm(param_t param)
         } else{ // NCHW layout
             implgemm<bm, bn, bk, wm, wn, wniter, tm, tn, NUM_THREADS, 1, false, false, 0><<<grid, block>>>(param);
         }
-        
     }
     return cudaGetLastError();
 }
