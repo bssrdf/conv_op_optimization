@@ -49,7 +49,7 @@ __global__ void implgemm(param_t param)
     // __shared__ __align__(16 * 1024) char smem[24 * 1024];
 
     // __shared__ char smem[4*(2 * BM * BK +  2 * BK * (BN+PAD))];
-    __shared__ char smem[4 * (TM*TN*NUM_THREADS <= 2*(BM * BK +  BK * (BN+PAD)) ? 2*(BM * BK +  BK * (BN+PAD)) : (TM*TN*NUM_THREADS))];
+    __shared__ char smem[4 * (TM*TN*NUM_THREADS <= 2*((BM+PAD) * BK +  BK * (BN+PAD)) ? 2*( (BM+PAD) * BK +  BK * (BN+PAD)) : (TM*TN*NUM_THREADS))];
     // __shared__ float smeminput[2 * BM * BK];
     // __shared__ float smemweight[2 * BK * (BN+PAD)];
     float *smemweight = reinterpret_cast<float *>(smem);
@@ -179,7 +179,7 @@ __global__ void implgemm(param_t param)
     // int curS = ((tx % 2) * 4 % (param.s * param.c)) / param.c; // kernel r offset
     // int curC = ((tx % 2) * 4 % (param.s * param.c)) % param.c; // kernel s offset
     
-    const uint input_sts_addr = innerRowA + innerColA * BM * 4;
+    const uint input_sts_addr = innerRowA + innerColA * (BM+PAD) * 4;
     for (uint offset = 0; offset + rowStrideA <= BM; offset += rowStrideA) {
         int n = (ksplit > 0) ? (bx * BM + innerRowA + offset) / PQ : z;
         const unsigned int npq_res = (bx * BM + innerRowA + offset) % PQ;
@@ -205,14 +205,14 @@ __global__ void implgemm(param_t param)
                                 curH * inChannelOffset + curW * param.c + curC:
                                 curC * inChannelOffset + curH * param.w + curW;
                 float4 tmp = reinterpret_cast<float4 *>(&param.input[inOffset + inOffsetTmp])[0];
-                smeminput[input_sts_addr + offset +     0] = tmp.x;
-                smeminput[input_sts_addr + offset +    BM] = tmp.y;
-                smeminput[input_sts_addr + offset +  2*BM] = tmp.z;
-                smeminput[input_sts_addr + offset +  3*BM] = tmp.w;
+                smeminput[input_sts_addr + offset +          0] = tmp.x;
+                smeminput[input_sts_addr + offset +     BM+PAD] = tmp.y;
+                smeminput[input_sts_addr + offset +  2*(BM+PAD)] = tmp.z;
+                smeminput[input_sts_addr + offset +  3*(BM+PAD)] = tmp.w;
             } else {
                 #pragma unroll
                 for (int i = 0; i < 4; ++i)
-                    smeminput[input_sts_addr + offset + i*BM] = 0.f;
+                    smeminput[input_sts_addr + offset + i*(BM+PAD)] = 0.f;
             }
         } else {
             #pragma unroll
@@ -239,9 +239,9 @@ __global__ void implgemm(param_t param)
                     int inOffsetTmp = layout == 0 ? 
                                 curH * inChannelOffset + curW * param.c + curC:
                                 curC * inChannelOffset + curH * param.w + curW;
-                    smeminput[input_sts_addr + offset + i*BM] = param.input[inOffset + inOffsetTmp];
+                    smeminput[input_sts_addr + offset + i*(BM+PAD)] = param.input[inOffset + inOffsetTmp];
                 } else {
-                    smeminput[input_sts_addr + offset + i*BM] = 0.f;
+                    smeminput[input_sts_addr + offset + i*(BM+PAD)] = 0.f;
                 }
             }
         }
@@ -390,8 +390,8 @@ __global__ void implgemm(param_t param)
             for (uint wSubRowIdx = 0; wSubRowIdx < WMITER; ++wSubRowIdx)
 #pragma unroll
                 for (uint i = 0; i < TM; ++i)
-                    input_frag[(subcrs + 1) % 2][wSubRowIdx * TM + i] = smeminput[load_flag * BM * BK +
-                        (subcrs + 1) * BM + input_lds_addr + wSubRowIdx * WSUBM + threadRowInWarp * TM + i];
+                    input_frag[(subcrs + 1) % 2][wSubRowIdx * TM + i] = smeminput[load_flag * (BM+PAD) * BK +
+                        (subcrs + 1) * (BM+PAD) + input_lds_addr + wSubRowIdx * WSUBM + threadRowInWarp * TM + i];
 
 // #pragma unroll
 //             for (int i = 0; i < 8; ++i)
@@ -487,14 +487,14 @@ __global__ void implgemm(param_t param)
                                 curH * inChannelOffset + curW * param.c + curC:
                                 curC * inChannelOffset + curH * param.w + curW;
                     float4 tmp = reinterpret_cast<float4 *>(&param.input[inOffset + inOffsetTmp])[0];
-                    smeminput[write_flag * BM * BK + input_sts_addr + offset +     0] = tmp.x;
-                    smeminput[write_flag * BM * BK + input_sts_addr + offset +    BM] = tmp.y;
-                    smeminput[write_flag * BM * BK + input_sts_addr + offset +  2*BM] = tmp.z;
-                    smeminput[write_flag * BM * BK + input_sts_addr + offset +  3*BM] = tmp.w;
+                    smeminput[write_flag * (BM+PAD) * BK + input_sts_addr + offset +     0] = tmp.x;
+                    smeminput[write_flag * (BM+PAD) * BK + input_sts_addr + offset +    BM+PAD] = tmp.y;
+                    smeminput[write_flag * (BM+PAD) * BK + input_sts_addr + offset +  2*(BM+PAD)] = tmp.z;
+                    smeminput[write_flag * (BM+PAD) * BK + input_sts_addr + offset +  3*(BM+PAD)] = tmp.w;
                 } else {
     #pragma unroll
                     for (int i = 0; i < 4; ++i)
-                        smeminput[write_flag * BM * BK + input_sts_addr + offset + i*BM] = 0.f;
+                        smeminput[write_flag * (BM+PAD) * BK + input_sts_addr + offset + i*(BM+PAD)] = 0.f;
                 }
             } else {
                 #pragma unroll
@@ -520,9 +520,9 @@ __global__ void implgemm(param_t param)
                         int inOffsetTmp = layout == 0 ? 
                                 curH * inChannelOffset + curW * param.c + curC:
                                 curC * inChannelOffset + curH * param.w + curW;
-                        smeminput[write_flag * BM * BK + input_sts_addr + offset + i*BM] = param.input[inOffset + inOffsetTmp];
+                        smeminput[write_flag * (BM+PAD) * BK + input_sts_addr + offset + i*(BM+PAD)] = param.input[inOffset + inOffsetTmp];
                     } else {
-                        smeminput[write_flag * BM * BK + input_sts_addr + offset + i*BM] = 0.f;
+                        smeminput[write_flag * (BM+PAD) * BK + input_sts_addr + offset + i*(BM+PAD)] = 0.f;
                     }
                 }
             }
@@ -542,7 +542,7 @@ __global__ void implgemm(param_t param)
         for (uint wSubRowIdx = 0; wSubRowIdx < WMITER; ++wSubRowIdx)
 #pragma unroll
             for (uint i = 0; i < TM; ++i)
-                input_frag[0][wSubRowIdx * TM + i] = smeminput[(load_flag ^ 1) * BM * BK +
+                input_frag[0][wSubRowIdx * TM + i] = smeminput[(load_flag ^ 1) * (BM+PAD) * BK +
                     input_lds_addr + wSubRowIdx * WSUBM + threadRowInWarp * TM + i];
 #pragma unroll
         for (uint wSubColIdx = 0; wSubColIdx < WNITER; ++wSubColIdx)
