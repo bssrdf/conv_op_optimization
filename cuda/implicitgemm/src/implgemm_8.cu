@@ -43,7 +43,7 @@ template<const int BM, const int BN, const int BK, const int WM, const int WN,
           const int WNITER, const int TM, const int TN, const int NUM_THREADS,
           // layout: 0, NHWC; 1, NCHW
           const int layout, const bool vec_load_a, const bool vec_load_b,
-          const int ksplit, const int PAD=1>
+          const int ksplit, const int PAD=4>
 __global__ void implgemm(param_t param)
 {
     // __shared__ __align__(16 * 1024) char smem[24 * 1024];
