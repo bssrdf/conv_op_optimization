@@ -35,8 +35,8 @@ static __global__ void reduce_f32(const float * __restrict__ x, float * __restri
     }
 }
 
-static __device__ uint swizzle(const uint idx, const uint mask, const uint shift){
-    return idx ^ ( (idx & mask) >> shift);
+static __device__ __inline__ uint swizzle(const uint idx, const uint mask, const uint shift){
+    return idx ^ ((idx & mask) >> shift);
 }
 
 /*
@@ -99,6 +99,9 @@ __global__ void implgemm(param_t param)
     // int y = by * BN + weight_lds_addr;
     int z = blockIdx.z;
 
+
+    // the following swizzle paramters need to be checked
+    // for all kinds of block configurations
     constexpr unsigned int SWIZZLE_BITS_A = int_log2(BM) + 2;
     constexpr unsigned int SWIZZLE_BITS_A_SHIFT = int_log2(BM) + 2 - 4;
     constexpr unsigned int SWIZZLE_MASK_A = 1u << SWIZZLE_BITS_A;
@@ -106,9 +109,15 @@ __global__ void implgemm(param_t param)
     constexpr unsigned int SWIZZLE_BITS_B = int_log2(BN) + 2;
     constexpr unsigned int SWIZZLE_BITS_B_SHIFT = int_log2(BN) + 2 - 4;
     constexpr unsigned int SWIZZLE_MASK_B = 1u << SWIZZLE_BITS_B;
+
+    constexpr unsigned int SWIZZLE_BITS_C_SHIFT = int_log2(TN*WSUBM);
+    constexpr unsigned int SWIZZLE_MASK_C = ((1u << int_log2(WSUBN/TN)) - 1) << SWIZZLE_BITS_C_SHIFT;
+
+
     // if(tx == 0 && bx == 0 && by == 0 && z == 0){
-    //     printf(" BITS: %u, %u \n", SWIZZLE_BITS_A, SWIZZLE_BITS_B);
-    //     printf(" SHFS: %u, %u \n", SWIZZLE_BITS_A_SHIFT, SWIZZLE_BITS_B_SHIFT);
+    //     printf(" BITS: %u, %u, %u \n", SWIZZLE_BITS_A, SWIZZLE_BITS_B, SWIZZLE_BITS_C_SHIFT);
+    //     printf(" SHFS: %u, %u \n", SWIZZLE_BITS_A_SHIFT, SWIZZLE_BITS_B_SHIFT );
+    //     printf(" MASK: %u \n", SWIZZLE_MASK_C);
     // }
 
     // float weight_ldg_reg[4];
@@ -794,8 +803,13 @@ __global__ void implgemm(param_t param)
                 for (int subj = 0; subj < TN; ++subj)
                 {
                     // output sts
-                    smemoutput[output_sts_addr + subj * WSUBM + subi] =
-                        output_frag[(i * TM + subi) * (WNITER * TN) + j * TN + subj];
+                    uint index = output_sts_addr + subj * WSUBM + subi;
+                    index = swizzle(index, SWIZZLE_MASK_C, SWIZZLE_BITS_C_SHIFT);
+                    smemoutput[index] = output_frag[(i * TM + subi) * (WNITER * TN) + j * TN + subj];
+                    // if(tx < 32 && bx == 0 && by == 0 && z == 0){
+                    //     printf("%d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d\n", tx, i, j, subi, subj, 
+                    //         mma_tid_x,mma_tid_y, threadColInWarp, threadRowInWarp, output_sts_addr + subj * WSUBM + subi, (output_sts_addr + subj * WSUBM + subi) % 32);
+                    // }
                 }
             }
             __syncthreads();
@@ -807,17 +821,19 @@ __global__ void implgemm(param_t param)
                 const int col = (ksplit > 0) ? gemm_i % PQ : gemm_i;
 
                 if (n < param.n && row < param.k && col < param.Oh * param.Ow){
+                    uint index = output_lds_addr + subk * WARPSIZE;
+                    index = swizzle(index, SWIZZLE_MASK_C, SWIZZLE_BITS_C_SHIFT);
                 //     int outOffset = z * param.n * param.k * param.Oh * param.Ow +  n * param.k * param.Oh * param.Ow  + (m_idx + i * 16 + subk) * param.Oh * param.Ow + (n_idx + j * 32);
                 // if (n < param.n && (m_idx + i * 16 + subk) < param.k && (n_idx + j * 32) < param.Oh * param.Ow)
                 //     param.interm[outOffset] = smemoutput[output_lds_addr + subk * 32];
                     if  constexpr (ksplit > 0){
                         const uint outOffset = z * param.n * param.k * param.Oh * param.Ow + n * param.k * param.Oh * param.Ow +
                                 row * param.Oh * param.Ow + col;
-                        param.interm[outOffset] = smemoutput[output_lds_addr + subk * WARPSIZE];
+                        param.interm[outOffset] = smemoutput[index];
                     } else {
                         const uint outOffset = z * param.k * param.Oh * param.Ow +
                                 row * param.Oh * param.Ow + col;
-                        param.output[outOffset] = smemoutput[output_lds_addr + subk * WARPSIZE];
+                        param.output[outOffset] = smemoutput[index];
                     }
                 }
             }
