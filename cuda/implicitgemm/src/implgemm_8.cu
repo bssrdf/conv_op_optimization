@@ -63,11 +63,11 @@ __global__ void implgemm(param_t param)
     // __shared__ __align__(16 * 1024) char smem[24 * 1024];
 
     // __shared__ char smem[4*(2 * BM * BK +  2 * BK * (BN+PAD))];
-    __shared__ char smem[4 * (TM*TN*NUM_THREADS <= 2*((BM+PAD) * BK +  BK * (BN+PAD)) ? 2*( (BM+PAD) * BK +  BK * (BN+PAD)) : (TM*TN*NUM_THREADS))];
+    __shared__ char smem[4 * (TM*TN*NUM_THREADS <= 2*(BM * BK +  BK * BN) ? 2*( BM * BK +  BK * BN) : (TM*TN*NUM_THREADS))];
     // __shared__ float smeminput[2 * BM * BK];
     // __shared__ float smemweight[2 * BK * (BN+PAD)];
     float *smemweight = reinterpret_cast<float *>(smem);
-    float *smeminput = reinterpret_cast<float *>(smem + 2 * BK * (BN+PAD) * 4);
+    float *smeminput = reinterpret_cast<float *>(smem + 2 * BK * BN * 4);
 
     const uint tx = threadIdx.x;
     const uint bx = blockIdx.x;
@@ -99,11 +99,17 @@ __global__ void implgemm(param_t param)
     // int y = by * BN + weight_lds_addr;
     int z = blockIdx.z;
 
-    constexpr unsigned int SWIZZLE_BITS_A = int_log2(BM) + 1;
-    constexpr unsigned int SWIZZLE_BITS_A_SHIFT = int_log2(BM) + 1 - 4;
-    // constexpr unsigned int SWIZZLE_BITS_B = int_log2(BN_dim / 8);
-    constexpr unsigned int SWIZZLE_MASK_A = 1 << SWIZZLE_BITS_A;
+    constexpr unsigned int SWIZZLE_BITS_A = int_log2(BM) + 2;
+    constexpr unsigned int SWIZZLE_BITS_A_SHIFT = int_log2(BM) + 2 - 4;
+    constexpr unsigned int SWIZZLE_MASK_A = 1u << SWIZZLE_BITS_A;
 
+    constexpr unsigned int SWIZZLE_BITS_B = int_log2(BN) + 2;
+    constexpr unsigned int SWIZZLE_BITS_B_SHIFT = int_log2(BN) + 2 - 4;
+    constexpr unsigned int SWIZZLE_MASK_B = 1u << SWIZZLE_BITS_B;
+    // if(tx == 0 && bx == 0 && by == 0 && z == 0){
+    //     printf(" BITS: %u, %u \n", SWIZZLE_BITS_A, SWIZZLE_BITS_B);
+    //     printf(" SHFS: %u, %u \n", SWIZZLE_BITS_A_SHIFT, SWIZZLE_BITS_B_SHIFT);
+    // }
 
     // float weight_ldg_reg[4];
     // float input_ldg_reg[4];
@@ -160,30 +166,42 @@ __global__ void implgemm(param_t param)
     // constexpr uint rowStrideB = NUM_THREADS / (BN / 4);
 
 // ldg
-    const uint weight_sts_addr = innerRowA + innerColA * (BN+PAD) * 4;
+    const uint weight_sts_addr = innerRowA + innerColA * BN * 4;
     for (uint offset = 0; offset + rowStrideA <= BN; offset += rowStrideA) {
         if(vec_load_b){
             // if (by * BN  + innerRowA + offset < param.k &&  start_k + innerColA * 4 < param.c * param.r * param.s){
                 if (by * BN  + innerRowA + offset < param.k &&   start_k + innerColA * 4 < end_k){
                 float4 tmp = reinterpret_cast<float4 *>(&param.weight[(by * BN + innerRowA + offset) * weightKOffset + start_k + innerColA * 4])[0];
-                smemweight[weight_sts_addr + offset +          0] = tmp.x;
-                smemweight[weight_sts_addr + offset +   (BN+PAD)] = tmp.y;
-                smemweight[weight_sts_addr + offset + 2*(BN+PAD)] = tmp.z;
-                smemweight[weight_sts_addr + offset + 3*(BN+PAD)] = tmp.w;
+                uint index0 = weight_sts_addr + offset +          0;
+                index0 = swizzle(index0,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
+                uint index1 = weight_sts_addr + offset +         BN;
+                index1 = swizzle(index1,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
+                uint index2 = weight_sts_addr + offset +       2*BN;
+                index2 = swizzle(index2,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
+                uint index3 = weight_sts_addr + offset +       3*BN;
+                index3 = swizzle(index3,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
+                smemweight[index0] = tmp.x;
+                smemweight[index1] = tmp.y;
+                smemweight[index2] = tmp.z;
+                smemweight[index3] = tmp.w;
             } else {
                 #pragma unroll
                 for (int i = 0; i < 4; ++i){
-                    smemweight[weight_sts_addr + offset + i*(BN+PAD)] = 0.f;
+                    uint index = weight_sts_addr + offset +       i*BN;
+                    index = swizzle(index,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
+                    smemweight[index] = 0.f;
                 }
             }
         }else{
             #pragma unroll
             for (int i = 0; i < 4; ++i){
+                uint index = weight_sts_addr + offset + i*BN;
+                index = swizzle(index,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
                 if (by * BN  + innerRowA + offset < param.k &&  start_k + innerColA * 4 + i < end_k){
                     // float4 tmp = reinterpret_cast<float4 *>(&param.weight[(by * BN + innerRowA + offset) * weightKOffset + innerColA * 4])[0];
-                    smemweight[weight_sts_addr + offset + i*(BN+PAD)] = param.weight[(by * BN + innerRowA + offset) * weightKOffset + start_k + innerColA * 4 + i];
+                    smemweight[index] = param.weight[(by * BN + innerRowA + offset) * weightKOffset + start_k + innerColA * 4 + i];
                 } else {
-                    smemweight[weight_sts_addr + offset + i*(BN+PAD)] = 0.f;
+                    smemweight[index] = 0.f;
                 }
             }
         }
@@ -399,11 +417,15 @@ __global__ void implgemm(param_t param)
 //                 weight_frag[(subcrs + 1) % 2][i + 4] = smemweight[load_flag * (BN+4) * 8 + weight_lds_addr + (subcrs + 1) * (BN+4) + i + 16];
 //             }
 #pragma unroll
-            for (uint wSubColIdx = 0; wSubColIdx < WNITER; ++wSubColIdx)
+            for (uint wSubColIdx = 0; wSubColIdx < WNITER; ++wSubColIdx){
 #pragma unroll
-                for (uint i = 0; i < TN; ++i)
-                    weight_frag[(subcrs + 1) % 2][wSubColIdx * TN + i] = smemweight[load_flag * (BN+PAD) * BK +
-                        (subcrs + 1) * (BN+PAD) + weight_lds_addr + wSubColIdx * WSUBN + threadColInWarp * TN + i];
+                for (uint i = 0; i < TN; ++i){
+                    uint index = load_flag * BN * BK +
+                        (subcrs + 1) * BN + weight_lds_addr + wSubColIdx * WSUBN + threadColInWarp * TN + i;
+                    index = swizzle(index,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
+                    weight_frag[(subcrs + 1) % 2][wSubColIdx * TN + i] = smemweight[index];
+                }
+            }
             // float* base_ptr = smemweight + load_flag * 132 * 8 + weight_lds_addr + (subcrs + 1) * 132;
 
             // // first 4 values -> weight_frag[...][0..3]
@@ -475,23 +497,40 @@ __global__ void implgemm(param_t param)
             if(vec_load_b){
                 if (by * BN  + innerRowA + offset < param.k &&  innerColA * 4 + crs + BK < end_k){
                     float4 tmp = reinterpret_cast<float4 *>(&param.weight[(by * BN + innerRowA + offset) * weightKOffset + innerColA * 4 + crs + BK])[0];
-                    smemweight[write_flag * (BN+PAD) * BK + weight_sts_addr + offset +          0] = tmp.x;
-                    smemweight[write_flag * (BN+PAD) * BK + weight_sts_addr + offset +   (BN+PAD)] = tmp.y;
-                    smemweight[write_flag * (BN+PAD) * BK + weight_sts_addr + offset + 2*(BN+PAD)] = tmp.z;
-                    smemweight[write_flag * (BN+PAD) * BK + weight_sts_addr + offset + 3*(BN+PAD)] = tmp.w;
+                    uint index0 = write_flag * BN * BK + weight_sts_addr + offset +          0;
+                    index0 = swizzle(index0,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
+                    uint index1 = write_flag * BN * BK + weight_sts_addr + offset +         BN;
+                    index1 = swizzle(index1,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
+                    uint index2 = write_flag * BN * BK + weight_sts_addr + offset +       2*BN;
+                    index2 = swizzle(index2,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
+                    uint index3 = write_flag * BN * BK + weight_sts_addr + offset +       3*BN;
+                    index3 = swizzle(index3,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
+                    smemweight[index0] = tmp.x;
+                    smemweight[index1] = tmp.y;
+                    smemweight[index2] = tmp.z;
+                    smemweight[index3] = tmp.w;
+                    // smemweight[write_flag * (BN+PAD) * BK + weight_sts_addr + offset +          0] = tmp.x;
+                    // smemweight[write_flag * (BN+PAD) * BK + weight_sts_addr + offset +   (BN+PAD)] = tmp.y;
+                    // smemweight[write_flag * (BN+PAD) * BK + weight_sts_addr + offset + 2*(BN+PAD)] = tmp.z;
+                    // smemweight[write_flag * (BN+PAD) * BK + weight_sts_addr + offset + 3*(BN+PAD)] = tmp.w;
                 } else {
                     #pragma unroll
-                    for (int i = 0; i < 4; ++i)
-                        smemweight[write_flag * (BN+PAD) * BK + weight_sts_addr + offset + i*(BN+PAD)] = 0.f;
+                    for (int i = 0; i < 4; ++i){
+                        uint index = write_flag * BN * BK + weight_sts_addr + offset + i*BN;
+                        index = swizzle(index,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
+                        smemweight[index] = 0.f;
+                    }
                 }
             }else{
                 #pragma unroll
                 for (int i = 0; i < 4; ++i){
+                    uint index = write_flag * BN * BK + weight_sts_addr + offset + i*BN;
+                    index = swizzle(index,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
                     if (by * BN  + innerRowA + offset < param.k &&  innerColA * 4 + crs + BK + i < end_k){
                         // float4 tmp = reinterpret_cast<float4 *>(&param.weight[(by * BN + innerRowA + offset) * weightKOffset + innerColA * 4 + crs + BK + i])[0];
-                        smemweight[write_flag * (BN+PAD) * BK + weight_sts_addr + offset + i*(BN+PAD)] = param.weight[(by * BN + innerRowA + offset) * weightKOffset + innerColA * 4 + crs + BK + i];
+                        smemweight[index] = param.weight[(by * BN + innerRowA + offset) * weightKOffset + innerColA * 4 + crs + BK + i];
                     } else {
-                        smemweight[write_flag * (BN+PAD) * BK + weight_sts_addr + offset + i*(BN+PAD)] = 0.f;
+                        smemweight[index] = 0.f;
                     }
                 }
             }
@@ -601,11 +640,15 @@ __global__ void implgemm(param_t param)
             }
         }
 #pragma unroll
-        for (uint wSubColIdx = 0; wSubColIdx < WNITER; ++wSubColIdx)
+        for (uint wSubColIdx = 0; wSubColIdx < WNITER; ++wSubColIdx){
 #pragma unroll
-            for (uint i = 0; i < TN; ++i)
-                weight_frag[0][wSubColIdx * TN + i] = smemweight[(load_flag ^ 1) * (BN+PAD) * BK +
-                    weight_lds_addr + wSubColIdx * WSUBN + threadColInWarp * TN + i];
+            for (uint i = 0; i < TN; ++i){
+                uint index = (load_flag ^ 1) * BN * BK +
+                    weight_lds_addr + wSubColIdx * WSUBN + threadColInWarp * TN + i;
+                index = swizzle(index,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
+                weight_frag[0][wSubColIdx * TN + i] = smemweight[index];
+            }
+        }
 // #pragma unroll
 //         for (int i = 0; i < 4; ++i)
 //         {
