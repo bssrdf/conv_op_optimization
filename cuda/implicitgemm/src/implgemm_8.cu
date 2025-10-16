@@ -12,6 +12,16 @@
 typedef unsigned int uint;
 constexpr uint WARPSIZE = 32; // warpSize is not constexpr
 
+constexpr __device__ unsigned int int_log2(unsigned int x)
+{
+    unsigned int result = 0;
+    while (x >>= 1)
+    {
+        result++;
+    }
+    return result;
+}
+
 static __global__ void reduce_f32(const float * __restrict__ x, float * __restrict__ dst, const int ncols, const int nrows) {
     const int row = blockIdx.x;
     const int col = threadIdx.x;
@@ -23,6 +33,10 @@ static __global__ void reduce_f32(const float * __restrict__ x, float * __restri
         }
         dst[row * blockDim.x + col] = sum;
     }
+}
+
+static __device__ uint swizzle(const uint idx, const uint mask, const uint shift){
+    return idx ^ ( (idx & mask) >> shift);
 }
 
 /*
@@ -84,6 +98,11 @@ __global__ void implgemm(param_t param)
     // int x = bx * BM + input_lds_addr;
     // int y = by * BN + weight_lds_addr;
     int z = blockIdx.z;
+
+    constexpr unsigned int SWIZZLE_BITS_A = int_log2(BM) + 1;
+    constexpr unsigned int SWIZZLE_BITS_A_SHIFT = int_log2(BM) + 1 - 4;
+    // constexpr unsigned int SWIZZLE_BITS_B = int_log2(BN_dim / 8);
+    constexpr unsigned int SWIZZLE_MASK_A = 1 << SWIZZLE_BITS_A;
 
 
     // float weight_ldg_reg[4];
@@ -179,7 +198,7 @@ __global__ void implgemm(param_t param)
     // int curS = ((tx % 2) * 4 % (param.s * param.c)) / param.c; // kernel r offset
     // int curC = ((tx % 2) * 4 % (param.s * param.c)) % param.c; // kernel s offset
     
-    const uint input_sts_addr = innerRowA + innerColA * (BM+PAD) * 4;
+    const uint input_sts_addr = innerRowA + innerColA * BM * 4;
     for (uint offset = 0; offset + rowStrideA <= BM; offset += rowStrideA) {
         int n = (ksplit > 0) ? (bx * BM + innerRowA + offset) / PQ : z;
         const unsigned int npq_res = (bx * BM + innerRowA + offset) % PQ;
@@ -205,14 +224,25 @@ __global__ void implgemm(param_t param)
                                 curH * inChannelOffset + curW * param.c + curC:
                                 curC * inChannelOffset + curH * param.w + curW;
                 float4 tmp = reinterpret_cast<float4 *>(&param.input[inOffset + inOffsetTmp])[0];
-                smeminput[input_sts_addr + offset +          0] = tmp.x;
-                smeminput[input_sts_addr + offset +     BM+PAD] = tmp.y;
-                smeminput[input_sts_addr + offset +  2*(BM+PAD)] = tmp.z;
-                smeminput[input_sts_addr + offset +  3*(BM+PAD)] = tmp.w;
+                uint index0 = input_sts_addr + offset +          0;
+                index0 = swizzle(index0,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+                uint index1 = input_sts_addr + offset +          BM;
+                index1 = swizzle(index1,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+                uint index2 = input_sts_addr + offset +          2*BM;
+                index2 = swizzle(index2,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+                uint index3 = input_sts_addr + offset +          3*BM;
+                index3 = swizzle(index3,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+                smeminput[index0] = tmp.x;
+                smeminput[index1] = tmp.y;
+                smeminput[index2] = tmp.z;
+                smeminput[index3] = tmp.w;
             } else {
                 #pragma unroll
-                for (int i = 0; i < 4; ++i)
-                    smeminput[input_sts_addr + offset + i*(BM+PAD)] = 0.f;
+                for (int i = 0; i < 4; ++i){
+                    uint index = input_sts_addr + offset +          i*BM;
+                    index = swizzle(index,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+                    smeminput[index] = 0.f;
+                }
             }
         } else {
             #pragma unroll
@@ -231,7 +261,8 @@ __global__ void implgemm(param_t param)
                 // const uint curR = fastdiv(start_k + innerColA * 4 + i,  param.SC_fastdiv);             // channel offset
                 // const uint curS = fastdiv(fastmodulo(start_k + innerColA * 4 + i, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
                 // const uint curC = fastmodulo(fastmodulo(start_k + innerColA * 4 + i, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
-
+                uint index = input_sts_addr + offset +          i*BM;
+                index = swizzle(index,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
                 const int curH = posh_ori + curR; // input h
                 const int curW = posw_ori + curS; // input w
                 if (curH >= 0 && curW >= 0 && curW < param.w && curH < param.h && start_k + innerColA * 4 + i < end_k){
@@ -239,9 +270,9 @@ __global__ void implgemm(param_t param)
                     int inOffsetTmp = layout == 0 ? 
                                 curH * inChannelOffset + curW * param.c + curC:
                                 curC * inChannelOffset + curH * param.w + curW;
-                    smeminput[input_sts_addr + offset + i*(BM+PAD)] = param.input[inOffset + inOffsetTmp];
+                    smeminput[index] = param.input[inOffset + inOffsetTmp];
                 } else {
-                    smeminput[input_sts_addr + offset + i*(BM+PAD)] = 0.f;
+                    smeminput[index] = 0.f;
                 }
             }
         }
@@ -282,11 +313,15 @@ __global__ void implgemm(param_t param)
     // int input_lds_addr = (warp_id % 2) * 64 + mma_tid_x * 4;
     const uint input_lds_addr =  mma_tid_x * WM;
 #pragma unroll
-    for (uint wSubRowIdx = 0; wSubRowIdx < WMITER; ++wSubRowIdx)
+    for (uint wSubRowIdx = 0; wSubRowIdx < WMITER; ++wSubRowIdx){
 #pragma unroll
-      for (uint i = 0; i < TM; ++i)
-        input_frag[0][wSubRowIdx * TM + i] = smeminput[input_lds_addr + wSubRowIdx * WSUBM +
-                               threadRowInWarp * TM + i];
+        for (uint i = 0; i < TM; ++i){
+            uint index = input_lds_addr + wSubRowIdx * WSUBM +
+                                threadRowInWarp * TM + i;
+            index = swizzle(index,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+            input_frag[0][wSubRowIdx * TM + i] = smeminput[index];
+        }
+    }
 
     // int weight_lds_addr = (warp_id / 2) * 32 + mma_tid_y * 4;
     const uint weight_lds_addr = mma_tid_y * WN;
@@ -387,11 +422,15 @@ __global__ void implgemm(param_t param)
 //                 input_frag[(subcrs + 1) % 2][i + 4] = smeminput[load_flag * BM * 8 + input_lds_addr + (subcrs + 1) * BM + i + 32];
 //             }
 #pragma unroll
-            for (uint wSubRowIdx = 0; wSubRowIdx < WMITER; ++wSubRowIdx)
+            for (uint wSubRowIdx = 0; wSubRowIdx < WMITER; ++wSubRowIdx){
 #pragma unroll
-                for (uint i = 0; i < TM; ++i)
-                    input_frag[(subcrs + 1) % 2][wSubRowIdx * TM + i] = smeminput[load_flag * (BM+PAD) * BK +
-                        (subcrs + 1) * (BM+PAD) + input_lds_addr + wSubRowIdx * WSUBM + threadRowInWarp * TM + i];
+                for (uint i = 0; i < TM; ++i){
+                    uint index = load_flag * BM * BK +
+                        (subcrs + 1) * BM + input_lds_addr + wSubRowIdx * WSUBM + threadRowInWarp * TM + i;
+                    index = swizzle(index,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+                    input_frag[(subcrs + 1) % 2][wSubRowIdx * TM + i] = smeminput[index];
+                }
+            }
 
 // #pragma unroll
 //             for (int i = 0; i < 8; ++i)
@@ -487,14 +526,25 @@ __global__ void implgemm(param_t param)
                                 curH * inChannelOffset + curW * param.c + curC:
                                 curC * inChannelOffset + curH * param.w + curW;
                     float4 tmp = reinterpret_cast<float4 *>(&param.input[inOffset + inOffsetTmp])[0];
-                    smeminput[write_flag * (BM+PAD) * BK + input_sts_addr + offset +     0] = tmp.x;
-                    smeminput[write_flag * (BM+PAD) * BK + input_sts_addr + offset +    BM+PAD] = tmp.y;
-                    smeminput[write_flag * (BM+PAD) * BK + input_sts_addr + offset +  2*(BM+PAD)] = tmp.z;
-                    smeminput[write_flag * (BM+PAD) * BK + input_sts_addr + offset +  3*(BM+PAD)] = tmp.w;
+                    uint index0 = write_flag * BM * BK + input_sts_addr + offset +     0;
+                    index0 = swizzle(index0,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+                    uint index1 = write_flag * BM * BK + input_sts_addr + offset +    BM;
+                    index1 = swizzle(index1,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+                    uint index2 = write_flag * BM * BK + input_sts_addr + offset +  2*BM;
+                    index2 = swizzle(index2,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+                    uint index3 = write_flag * BM * BK + input_sts_addr + offset +  3*BM;
+                    index3 = swizzle(index3,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+                    smeminput[index0] = tmp.x;
+                    smeminput[index1] = tmp.y;
+                    smeminput[index2] = tmp.z;
+                    smeminput[index3] = tmp.w;
                 } else {
     #pragma unroll
-                    for (int i = 0; i < 4; ++i)
-                        smeminput[write_flag * (BM+PAD) * BK + input_sts_addr + offset + i*(BM+PAD)] = 0.f;
+                    for (int i = 0; i < 4; ++i){
+                        uint index = write_flag * BM * BK + input_sts_addr + offset + i*BM;
+                        index = swizzle(index,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+                        smeminput[index] = 0.f;
+                    }
                 }
             } else {
                 #pragma unroll
@@ -515,14 +565,16 @@ __global__ void implgemm(param_t param)
                     const uint curS = layout == 0 ? cur1 : cur2;
                     const int curH = posh_ori + curR; // input h
                     const int curW = posw_ori + curS; // input w
+                    uint index = write_flag * BM * BK + input_sts_addr + offset + i*BM;
+                    index = swizzle(index,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
                     if (curH >= 0 && curW >= 0 && curW < param.w && curH < param.h && innerColA * 4 + crs + BK + i < end_k){
                         // int inOffsetTmp = curH * inChannelOffset + curW * param.c + curC;
                         int inOffsetTmp = layout == 0 ? 
                                 curH * inChannelOffset + curW * param.c + curC:
                                 curC * inChannelOffset + curH * param.w + curW;
-                        smeminput[write_flag * (BM+PAD) * BK + input_sts_addr + offset + i*(BM+PAD)] = param.input[inOffset + inOffsetTmp];
+                        smeminput[index] = param.input[inOffset + inOffsetTmp];
                     } else {
-                        smeminput[write_flag * (BM+PAD) * BK + input_sts_addr + offset + i*(BM+PAD)] = 0.f;
+                        smeminput[index] = 0.f;
                     }
                 }
             }
@@ -539,11 +591,15 @@ __global__ void implgemm(param_t param)
         __syncthreads();
         write_flag ^= 1;
 #pragma unroll
-        for (uint wSubRowIdx = 0; wSubRowIdx < WMITER; ++wSubRowIdx)
+        for (uint wSubRowIdx = 0; wSubRowIdx < WMITER; ++wSubRowIdx){
 #pragma unroll
-            for (uint i = 0; i < TM; ++i)
-                input_frag[0][wSubRowIdx * TM + i] = smeminput[(load_flag ^ 1) * (BM+PAD) * BK +
-                    input_lds_addr + wSubRowIdx * WSUBM + threadRowInWarp * TM + i];
+            for (uint i = 0; i < TM; ++i){
+                 uint index = (load_flag ^ 1) * BM * BK +
+                    input_lds_addr + wSubRowIdx * WSUBM + threadRowInWarp * TM + i;
+                index = swizzle(index,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+                input_frag[0][wSubRowIdx * TM + i] = smeminput[index];
+            }
+        }
 #pragma unroll
         for (uint wSubColIdx = 0; wSubColIdx < WNITER; ++wSubColIdx)
 #pragma unroll
