@@ -379,7 +379,7 @@ __global__ void implgemm(param_t param)
     for (uint wSubColIdx = 0; wSubColIdx < WNITER; ++wSubColIdx){
         uint index = weight_lds_addr + wSubColIdx * WSUBN +
                              threadColInWarp * TN;
-        index = swizzle(index,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+        index = swizzle(index,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
 #pragma unroll
         for (uint i = 0; i < TN; ++i){
             weight_frag[0][wSubColIdx * TN + i] = smemweight[index+i];
