@@ -183,15 +183,15 @@ __global__ void implgemm(param_t param)
                 float4 tmp = reinterpret_cast<float4 *>(&param.weight[(by * BN + innerRowA + offset) * weightKOffset + start_k + innerColA * 4])[0];
                 uint index0 = weight_sts_addr + offset +          0;
                 index0 = swizzle(index0,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
+                smemweight[index0] = tmp.x;
                 uint index1 = weight_sts_addr + offset +         BN;
                 index1 = swizzle(index1,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
+                smemweight[index1] = tmp.y;
                 uint index2 = weight_sts_addr + offset +       2*BN;
                 index2 = swizzle(index2,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
+                smemweight[index2] = tmp.z;
                 uint index3 = weight_sts_addr + offset +       3*BN;
                 index3 = swizzle(index3,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
-                smemweight[index0] = tmp.x;
-                smemweight[index1] = tmp.y;
-                smemweight[index2] = tmp.z;
                 smemweight[index3] = tmp.w;
             } else {
                 #pragma unroll
@@ -253,15 +253,15 @@ __global__ void implgemm(param_t param)
                 float4 tmp = reinterpret_cast<float4 *>(&param.input[inOffset + inOffsetTmp])[0];
                 uint index0 = input_sts_addr + offset +          0;
                 index0 = swizzle(index0,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+                smeminput[index0] = tmp.x;
                 uint index1 = input_sts_addr + offset +          BM;
                 index1 = swizzle(index1,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+                smeminput[index1] = tmp.y;
                 uint index2 = input_sts_addr + offset +          2*BM;
                 index2 = swizzle(index2,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+                smeminput[index2] = tmp.z;
                 uint index3 = input_sts_addr + offset +          3*BM;
                 index3 = swizzle(index3,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
-                smeminput[index0] = tmp.x;
-                smeminput[index1] = tmp.y;
-                smeminput[index2] = tmp.z;
                 smeminput[index3] = tmp.w;
             } else {
                 #pragma unroll
@@ -508,15 +508,15 @@ __global__ void implgemm(param_t param)
                     float4 tmp = reinterpret_cast<float4 *>(&param.weight[(by * BN + innerRowA + offset) * weightKOffset + innerColA * 4 + crs + BK])[0];
                     uint index0 = write_flag * BN * BK + weight_sts_addr + offset +          0;
                     index0 = swizzle(index0,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
+                    smemweight[index0] = tmp.x;
                     uint index1 = write_flag * BN * BK + weight_sts_addr + offset +         BN;
                     index1 = swizzle(index1,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
+                    smemweight[index1] = tmp.y;
                     uint index2 = write_flag * BN * BK + weight_sts_addr + offset +       2*BN;
                     index2 = swizzle(index2,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
+                    smemweight[index2] = tmp.z;
                     uint index3 = write_flag * BN * BK + weight_sts_addr + offset +       3*BN;
                     index3 = swizzle(index3,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
-                    smemweight[index0] = tmp.x;
-                    smemweight[index1] = tmp.y;
-                    smemweight[index2] = tmp.z;
                     smemweight[index3] = tmp.w;
                     // smemweight[write_flag * (BN+PAD) * BK + weight_sts_addr + offset +          0] = tmp.x;
                     // smemweight[write_flag * (BN+PAD) * BK + weight_sts_addr + offset +   (BN+PAD)] = tmp.y;
@@ -576,15 +576,15 @@ __global__ void implgemm(param_t param)
                     float4 tmp = reinterpret_cast<float4 *>(&param.input[inOffset + inOffsetTmp])[0];
                     uint index0 = write_flag * BM * BK + input_sts_addr + offset +     0;
                     index0 = swizzle(index0,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+                    smeminput[index0] = tmp.x;
                     uint index1 = write_flag * BM * BK + input_sts_addr + offset +    BM;
                     index1 = swizzle(index1,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+                    smeminput[index1] = tmp.y;
                     uint index2 = write_flag * BM * BK + input_sts_addr + offset +  2*BM;
                     index2 = swizzle(index2,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+                    smeminput[index2] = tmp.z;
                     uint index3 = write_flag * BM * BK + input_sts_addr + offset +  3*BM;
                     index3 = swizzle(index3,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
-                    smeminput[index0] = tmp.x;
-                    smeminput[index1] = tmp.y;
-                    smeminput[index2] = tmp.z;
                     smeminput[index3] = tmp.w;
                 } else {
     #pragma unroll
