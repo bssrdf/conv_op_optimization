@@ -184,34 +184,46 @@ __global__ void implgemm(param_t param)
                 uint index0 = weight_sts_addr + offset +          0;
                 index0 = swizzle(index0,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
                 smemweight[index0] = tmp.x;
-                uint index1 = weight_sts_addr + offset +         BN;
-                index1 = swizzle(index1,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
-                smemweight[index1] = tmp.y;
-                uint index2 = weight_sts_addr + offset +       2*BN;
-                index2 = swizzle(index2,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
-                smemweight[index2] = tmp.z;
-                uint index3 = weight_sts_addr + offset +       3*BN;
-                index3 = swizzle(index3,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
-                smemweight[index3] = tmp.w;
+                // uint index1 = weight_sts_addr + offset +         BN;
+                // index1 = swizzle(index1,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
+                // uint index1 = index0 +         BN;
+                // smemweight[index1] = tmp.y;
+                smemweight[index0 +         BN] = tmp.y;
+                // uint index2 = weight_sts_addr + offset +       2*BN;
+                // index2 = swizzle(index2,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
+                // uint index2 = index0 +        2*BN;
+                // smemweight[index2] = tmp.z;
+                smemweight[index0 +         2*BN] = tmp.z;
+                // uint index3 = weight_sts_addr + offset +       3*BN;
+                // index3 = swizzle(index3,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
+                // uint index3 = index0 +        3*BN;
+                smemweight[index0 +         3*BN] = tmp.w;
+                // smemweight[index3] = tmp.w;
             } else {
+                uint index = weight_sts_addr + offset;
+                index = swizzle(index,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
                 #pragma unroll
                 for (int i = 0; i < 4; ++i){
-                    uint index = weight_sts_addr + offset +       i*BN;
-                    index = swizzle(index,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
+                    // uint index = weight_sts_addr + offset +       i*BN;
+                    // index = swizzle(index,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
                     smemweight[index] = 0.f;
+                    index += BN;
                 }
             }
         }else{
+            uint index = weight_sts_addr + offset;
+            index = swizzle(index,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
             #pragma unroll
             for (int i = 0; i < 4; ++i){
-                uint index = weight_sts_addr + offset + i*BN;
-                index = swizzle(index,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
+                // uint index = weight_sts_addr + offset + i*BN;
+                // index = swizzle(index,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
                 if (by * BN  + innerRowA + offset < param.k &&  start_k + innerColA * 4 + i < end_k){
                     // float4 tmp = reinterpret_cast<float4 *>(&param.weight[(by * BN + innerRowA + offset) * weightKOffset + innerColA * 4])[0];
                     smemweight[index] = param.weight[(by * BN + innerRowA + offset) * weightKOffset + start_k + innerColA * 4 + i];
                 } else {
                     smemweight[index] = 0.f;
                 }
+                index += BN;
             }
         }
     }
@@ -254,24 +266,35 @@ __global__ void implgemm(param_t param)
                 uint index0 = input_sts_addr + offset +          0;
                 index0 = swizzle(index0,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
                 smeminput[index0] = tmp.x;
-                uint index1 = input_sts_addr + offset +          BM;
-                index1 = swizzle(index1,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
-                smeminput[index1] = tmp.y;
-                uint index2 = input_sts_addr + offset +          2*BM;
-                index2 = swizzle(index2,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
-                smeminput[index2] = tmp.z;
-                uint index3 = input_sts_addr + offset +          3*BM;
-                index3 = swizzle(index3,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
-                smeminput[index3] = tmp.w;
+                // uint index1 = input_sts_addr + offset +          BM;
+                // index1 = swizzle(index1,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+                // uint index1 = index0  +          BM;
+                // smeminput[index1] = tmp.y;
+                smeminput[index0  +          BM] = tmp.y;
+                // uint index2 = input_sts_addr + offset +          2*BM;
+                // index2 = swizzle(index2,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+                // uint index2 = index0  +          2*BM;
+                // smeminput[index2] = tmp.z;
+                smeminput[index0  +          2*BM] = tmp.z;
+                // uint index3 = input_sts_addr + offset +          3*BM;
+                // index3 = swizzle(index3,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+                // uint index3 = index0  +          3*BM;
+                smeminput[index0  +          3*BM] = tmp.w;
+                // smeminput[index3] = tmp.w;
             } else {
+                uint index = input_sts_addr + offset;
+                index = swizzle(index,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
                 #pragma unroll
                 for (int i = 0; i < 4; ++i){
-                    uint index = input_sts_addr + offset +          i*BM;
-                    index = swizzle(index,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+                    // uint index = input_sts_addr + offset +          i*BM;
+                    // index = swizzle(index,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
                     smeminput[index] = 0.f;
+                    index += BM;
                 }
             }
         } else {
+            uint index = input_sts_addr + offset;
+            index = swizzle(index,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
             #pragma unroll
             for (int i = 0; i < 4; ++i){
                 const uint cur0 = fastdiv(start_k + innerColA * 4 + i,  
@@ -288,8 +311,8 @@ __global__ void implgemm(param_t param)
                 // const uint curR = fastdiv(start_k + innerColA * 4 + i,  param.SC_fastdiv);             // channel offset
                 // const uint curS = fastdiv(fastmodulo(start_k + innerColA * 4 + i, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
                 // const uint curC = fastmodulo(fastmodulo(start_k + innerColA * 4 + i, param.SC_fastdiv),  param.C_fastdiv); // kernel r offset
-                uint index = input_sts_addr + offset +          i*BM;
-                index = swizzle(index,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+                // uint index = input_sts_addr + offset +          i*BM;
+                // index = swizzle(index,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
                 const int curH = posh_ori + curR; // input h
                 const int curW = posw_ori + curS; // input w
                 if (curH >= 0 && curW >= 0 && curW < param.w && curH < param.h && start_k + innerColA * 4 + i < end_k){
@@ -301,6 +324,7 @@ __global__ void implgemm(param_t param)
                 } else {
                     smeminput[index] = 0.f;
                 }
+                index += BM;
             }
         }
     }
@@ -427,12 +451,16 @@ __global__ void implgemm(param_t param)
 //             }
 #pragma unroll
             for (uint wSubColIdx = 0; wSubColIdx < WNITER; ++wSubColIdx){
+                uint index = load_flag * BN * BK +
+                    (subcrs + 1) * BN + weight_lds_addr + wSubColIdx * WSUBN + threadColInWarp * TN;
+                index = swizzle(index,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
 #pragma unroll
                 for (uint i = 0; i < TN; ++i){
-                    uint index = load_flag * BN * BK +
-                        (subcrs + 1) * BN + weight_lds_addr + wSubColIdx * WSUBN + threadColInWarp * TN + i;
-                    index = swizzle(index,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
+                    // uint index = load_flag * BN * BK +
+                    //     (subcrs + 1) * BN + weight_lds_addr + wSubColIdx * WSUBN + threadColInWarp * TN + i;
+                    // index = swizzle(index,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
                     weight_frag[(subcrs + 1) % 2][wSubColIdx * TN + i] = smemweight[index];
+                    index++;
                 }
             }
             // float* base_ptr = smemweight + load_flag * 132 * 8 + weight_lds_addr + (subcrs + 1) * 132;
@@ -454,12 +482,19 @@ __global__ void implgemm(param_t param)
 //             }
 #pragma unroll
             for (uint wSubRowIdx = 0; wSubRowIdx < WMITER; ++wSubRowIdx){
+                uint index = load_flag * BM * BK +
+                    (subcrs + 1) * BM + input_lds_addr + wSubRowIdx * WSUBM + threadRowInWarp * TM;
+                index = swizzle(index,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
 #pragma unroll
                 for (uint i = 0; i < TM; ++i){
-                    uint index = load_flag * BM * BK +
-                        (subcrs + 1) * BM + input_lds_addr + wSubRowIdx * WSUBM + threadRowInWarp * TM + i;
-                    index = swizzle(index,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+                    // uint index = load_flag * BM * BK +
+                    //     (subcrs + 1) * BM + input_lds_addr + wSubRowIdx * WSUBM + threadRowInWarp * TM + i;
+                    // index = swizzle(index,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+                    // if(tx ==1 && bx == 0 && by == 0 && z==0){
+                    //     printf("%d, %d,  %d, %d\n", wSubRowIdx, i, index0, index);
+                    // }
                     input_frag[(subcrs + 1) % 2][wSubRowIdx * TM + i] = smeminput[index];
+                    index++;
                 }
             }
 
@@ -509,38 +544,48 @@ __global__ void implgemm(param_t param)
                     uint index0 = write_flag * BN * BK + weight_sts_addr + offset +          0;
                     index0 = swizzle(index0,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
                     smemweight[index0] = tmp.x;
-                    uint index1 = write_flag * BN * BK + weight_sts_addr + offset +         BN;
-                    index1 = swizzle(index1,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
-                    smemweight[index1] = tmp.y;
-                    uint index2 = write_flag * BN * BK + weight_sts_addr + offset +       2*BN;
-                    index2 = swizzle(index2,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
-                    smemweight[index2] = tmp.z;
-                    uint index3 = write_flag * BN * BK + weight_sts_addr + offset +       3*BN;
-                    index3 = swizzle(index3,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
-                    smemweight[index3] = tmp.w;
+                    // uint index1 = write_flag * BN * BK + weight_sts_addr + offset +         BN;
+                    // uint index1 = index0 + BN;
+                    // index1 = swizzle(index1,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
+                    // smemweight[index1] = tmp.y;
+                    smemweight[index0 + BN] = tmp.y;
+                    // uint index2 = write_flag * BN * BK + weight_sts_addr + offset +       2*BN;
+                    // uint index2 = index0 + 2*BN;
+                    // index2 = swizzle(index2,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
+                    // smemweight[index2] = tmp.z;
+                    smemweight[index0 + 2*BN] = tmp.z;
+                    // uint index3 = write_flag * BN * BK + weight_sts_addr + offset +       3*BN;
+                    // uint index3 = index0 + 3*BN;
+                    // index3 = swizzle(index3,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
+                    // smemweight[index3] = tmp.w;
+                    smemweight[index0 + 3*BN] = tmp.w;
                     // smemweight[write_flag * (BN+PAD) * BK + weight_sts_addr + offset +          0] = tmp.x;
                     // smemweight[write_flag * (BN+PAD) * BK + weight_sts_addr + offset +   (BN+PAD)] = tmp.y;
                     // smemweight[write_flag * (BN+PAD) * BK + weight_sts_addr + offset + 2*(BN+PAD)] = tmp.z;
                     // smemweight[write_flag * (BN+PAD) * BK + weight_sts_addr + offset + 3*(BN+PAD)] = tmp.w;
                 } else {
+                    uint index = write_flag * BN * BK + weight_sts_addr + offset;
+                    index = swizzle(index,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
                     #pragma unroll
                     for (int i = 0; i < 4; ++i){
-                        uint index = write_flag * BN * BK + weight_sts_addr + offset + i*BN;
-                        index = swizzle(index,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
                         smemweight[index] = 0.f;
+                        index += BN;
                     }
                 }
             }else{
+                uint index = write_flag * BN * BK + weight_sts_addr + offset;
+                index = swizzle(index,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
                 #pragma unroll
                 for (int i = 0; i < 4; ++i){
-                    uint index = write_flag * BN * BK + weight_sts_addr + offset + i*BN;
-                    index = swizzle(index,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
+                    // uint index = write_flag * BN * BK + weight_sts_addr + offset + i*BN;
+                    // index = swizzle(index,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
                     if (by * BN  + innerRowA + offset < param.k &&  innerColA * 4 + crs + BK + i < end_k){
                         // float4 tmp = reinterpret_cast<float4 *>(&param.weight[(by * BN + innerRowA + offset) * weightKOffset + innerColA * 4 + crs + BK + i])[0];
                         smemweight[index] = param.weight[(by * BN + innerRowA + offset) * weightKOffset + innerColA * 4 + crs + BK + i];
                     } else {
                         smemweight[index] = 0.f;
                     }
+                    index += BN;
                 }
             }
         }
@@ -577,24 +622,35 @@ __global__ void implgemm(param_t param)
                     uint index0 = write_flag * BM * BK + input_sts_addr + offset +     0;
                     index0 = swizzle(index0,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
                     smeminput[index0] = tmp.x;
-                    uint index1 = write_flag * BM * BK + input_sts_addr + offset +    BM;
-                    index1 = swizzle(index1,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
-                    smeminput[index1] = tmp.y;
-                    uint index2 = write_flag * BM * BK + input_sts_addr + offset +  2*BM;
-                    index2 = swizzle(index2,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
-                    smeminput[index2] = tmp.z;
-                    uint index3 = write_flag * BM * BK + input_sts_addr + offset +  3*BM;
-                    index3 = swizzle(index3,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
-                    smeminput[index3] = tmp.w;
+                    // uint index1 = write_flag * BM * BK + input_sts_addr + offset +    BM;
+                    // uint index1 = index0  +   BM;
+                    // index1 = swizzle(index1,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+                    // smeminput[index1] = tmp.y;
+                    smeminput[index0  +   BM] = tmp.y;
+                    // uint index2 = write_flag * BM * BK + input_sts_addr + offset +  2*BM;
+                    // uint index2 = index0  +   2*BM;
+                    // index2 = swizzle(index2,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+                    // smeminput[index2] = tmp.z;
+                    smeminput[index0  +   2*BM] = tmp.z;
+                    // uint index3 = write_flag * BM * BK + input_sts_addr + offset +  3*BM;
+                    // uint index3 = index0  +   3*BM;
+                    // index3 = swizzle(index3,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+                    // smeminput[index3] = tmp.w;
+                    smeminput[index0  +   3*BM] = tmp.w;
                 } else {
+                    uint index = write_flag * BM * BK + input_sts_addr + offset;
+                    index = swizzle(index,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
     #pragma unroll
                     for (int i = 0; i < 4; ++i){
-                        uint index = write_flag * BM * BK + input_sts_addr + offset + i*BM;
-                        index = swizzle(index,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+                        // uint index = write_flag * BM * BK + input_sts_addr + offset + i*BM;
+                        // index = swizzle(index,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
                         smeminput[index] = 0.f;
+                        index += BM;
                     }
                 }
             } else {
+                uint index = write_flag * BM * BK + input_sts_addr + offset;
+                index = swizzle(index,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
                 #pragma unroll
                 for (int i = 0; i < 4; ++i){
                     // const uint curR = fastdiv(innerColA * 4 + crs + BK + i,  param.SC_fastdiv);             // channel offset
@@ -613,8 +669,8 @@ __global__ void implgemm(param_t param)
                     const uint curS = layout == 0 ? cur1 : cur2;
                     const int curH = posh_ori + curR; // input h
                     const int curW = posw_ori + curS; // input w
-                    uint index = write_flag * BM * BK + input_sts_addr + offset + i*BM;
-                    index = swizzle(index,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+                    // uint index = write_flag * BM * BK + input_sts_addr + offset + i*BM;
+                    // index = swizzle(index,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
                     if (curH >= 0 && curW >= 0 && curW < param.w && curH < param.h && innerColA * 4 + crs + BK + i < end_k){
                         // int inOffsetTmp = curH * inChannelOffset + curW * param.c + curC;
                         int inOffsetTmp = layout == 0 ? 
@@ -624,6 +680,7 @@ __global__ void implgemm(param_t param)
                     } else {
                         smeminput[index] = 0.f;
                     }
+                    index += BM;
                 }
             }
         }
