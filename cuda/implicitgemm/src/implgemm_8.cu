@@ -365,23 +365,32 @@ __global__ void implgemm(param_t param)
     const uint input_lds_addr =  mma_tid_x * WM;
 #pragma unroll
     for (uint wSubRowIdx = 0; wSubRowIdx < WMITER; ++wSubRowIdx){
+        uint index = input_lds_addr + wSubRowIdx * WSUBM +
+                                threadRowInWarp * TM;
+        index = swizzle(index,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
 #pragma unroll
         for (uint i = 0; i < TM; ++i){
-            uint index = input_lds_addr + wSubRowIdx * WSUBM +
-                                threadRowInWarp * TM + i;
-            index = swizzle(index,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+            // uint index = input_lds_addr + wSubRowIdx * WSUBM +
+            //                     threadRowInWarp * TM + i;
+            // index = swizzle(index,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
             input_frag[0][wSubRowIdx * TM + i] = smeminput[index];
+            index++;
         }
     }
 
     // int weight_lds_addr = (warp_id / 2) * 32 + mma_tid_y * 4;
     const uint weight_lds_addr = mma_tid_y * WN;
 #pragma unroll
-    for (uint wSubColIdx = 0; wSubColIdx < WNITER; ++wSubColIdx)
+    for (uint wSubColIdx = 0; wSubColIdx < WNITER; ++wSubColIdx){
+        uint index = weight_lds_addr + wSubColIdx * WSUBN +
+                             threadColInWarp * TN;
+        index = swizzle(index,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
 #pragma unroll
-      for (uint i = 0; i < TN; ++i)
-        weight_frag[0][wSubColIdx * TN + i] = smemweight[weight_lds_addr + wSubColIdx * WSUBN +
-                             threadColInWarp * TN + i];
+        for (uint i = 0; i < TN; ++i){
+            weight_frag[0][wSubColIdx * TN + i] = smemweight[index];
+            index++;
+        }
+    }
 
 // #pragma unroll
 //     for (int i = 0; i < 4; ++i)
@@ -697,22 +706,30 @@ __global__ void implgemm(param_t param)
         write_flag ^= 1;
 #pragma unroll
         for (uint wSubRowIdx = 0; wSubRowIdx < WMITER; ++wSubRowIdx){
+            uint index = (load_flag ^ 1) * BM * BK +
+                input_lds_addr + wSubRowIdx * WSUBM + threadRowInWarp * TM;
+            index = swizzle(index,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
 #pragma unroll
             for (uint i = 0; i < TM; ++i){
-                 uint index = (load_flag ^ 1) * BM * BK +
-                    input_lds_addr + wSubRowIdx * WSUBM + threadRowInWarp * TM + i;
-                index = swizzle(index,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
+                // uint index = (load_flag ^ 1) * BM * BK +
+                //     input_lds_addr + wSubRowIdx * WSUBM + threadRowInWarp * TM + i;
+                // index = swizzle(index,  SWIZZLE_MASK_A, SWIZZLE_BITS_A_SHIFT);
                 input_frag[0][wSubRowIdx * TM + i] = smeminput[index];
+                index++;
             }
         }
 #pragma unroll
         for (uint wSubColIdx = 0; wSubColIdx < WNITER; ++wSubColIdx){
+            uint index = (load_flag ^ 1) * BN * BK +
+                weight_lds_addr + wSubColIdx * WSUBN + threadColInWarp * TN;
+            index = swizzle(index,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
 #pragma unroll
             for (uint i = 0; i < TN; ++i){
-                uint index = (load_flag ^ 1) * BN * BK +
-                    weight_lds_addr + wSubColIdx * WSUBN + threadColInWarp * TN + i;
-                index = swizzle(index,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
+                // uint index = (load_flag ^ 1) * BN * BK +
+                //     weight_lds_addr + wSubColIdx * WSUBN + threadColInWarp * TN + i;
+                // index = swizzle(index,  SWIZZLE_MASK_B, SWIZZLE_BITS_B_SHIFT);
                 weight_frag[0][wSubColIdx * TN + i] = smemweight[index];
+                index++;
             }
         }
 // #pragma unroll
