@@ -103,11 +103,11 @@ __global__ void implgemm(param_t param)
     // the following swizzle paramters need to be checked
     // for all kinds of block configurations
     constexpr unsigned int SWIZZLE_BITS_A = int_log2(BM) + 2;
-    constexpr unsigned int SWIZZLE_BITS_A_SHIFT = int_log2(BM) + 2 - 4;
-    constexpr unsigned int SWIZZLE_MASK_A = 1u << SWIZZLE_BITS_A;
+    constexpr unsigned int SWIZZLE_BITS_A_SHIFT = SWIZZLE_BITS_A - int_log2(WARPSIZE/(BK/4));
+    constexpr unsigned int SWIZZLE_MASK_A = ((1u << (BK/4-1)) - 1) << SWIZZLE_BITS_A;
 
     constexpr unsigned int SWIZZLE_BITS_B = int_log2(BN) + 2;
-    constexpr unsigned int SWIZZLE_BITS_B_SHIFT = int_log2(BN) + 2 - 4;
+    constexpr unsigned int SWIZZLE_BITS_B_SHIFT = SWIZZLE_BITS_B - int_log2(WARPSIZE/(BK/4));
     constexpr unsigned int SWIZZLE_MASK_B = 1u << SWIZZLE_BITS_B;
 
     constexpr unsigned int SWIZZLE_BITS_C_SHIFT = int_log2(TN*WSUBM);
