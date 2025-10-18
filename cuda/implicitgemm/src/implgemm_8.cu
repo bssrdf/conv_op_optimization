@@ -262,24 +262,24 @@ __global__ void implgemm(param_t param)
 
     __syncthreads();
 
-    // if(tx == 0 && bx == 0 && by == 0 && z == 0){
-    //     for(int i=0; i < 128; ++i)
-    //         printf("%.2f,",  smeminput[i]);
-    //     printf("\n");
-    //     for(int i=128; i < 256; ++i)
-    //         printf("%.2f,",  smeminput[i]);
-    //     printf("\n");
-    // }
+    if(tx == 0 && bx == 5 && by == 0 && z == 0){
+        for(int i=0; i < BM; ++i)
+            printf("%.2f,",  smeminput[i]);
+        printf("\n");
+        // for(int i=128; i < 256; ++i)
+        //     printf("%.2f,",  smeminput[i]);
+        // printf("\n");
+    }
 
-    // if(tx == 0 && bx == 0 && by == 0 && z == 0){
-    //     printf("%u, %u, %u, %u \n",  innerRowA, innerColA, rowStrideA, weight_sts_addr);
-    //     for(int i=0; i < 16; ++i)
-    //         printf("%f,",  smemweight[i]);
-    //     printf("\n");
-    //     for(int i=0; i < 16; ++i)
-    //         printf("%f,",  param.weight[i*param.c*param.r*param.s]);
-    //     printf("\n");
-    // }
+    if(tx == 0 && bx == 5 && by == 0 && z == 0){
+        // printf("%u, %u, %u, %u \n",  innerRowA, innerColA, rowStrideA, weight_sts_addr);
+        for(int i=0; i < BN; ++i)
+            printf("%f,",  smemweight[i]);
+        printf("\n");
+        // for(int i=0; i < 16; ++i)
+        //     printf("%f,",  param.weight[i*param.c*param.r*param.s]);
+        // printf("\n");
+    }
 
     // lds
     // int input_lds_addr = (warp_id % 2) * 64 + mma_tid_x * 4;
@@ -764,16 +764,16 @@ cudaError_t launch_implgemm(param_t param)
     int outh = (h - r + 2 * p) / u + 1;
     int outw = (w - s + 2 * q) / v + 1;    
 
-    const uint bm = 128;
-    const uint bn = 128;
+    const uint bm = 64;
+    const uint bn = 32;
     const uint bk = 8;
 
-    const uint NUM_THREADS = 256;
+    const uint NUM_THREADS = 64;
     
     const uint wn = 32;
-    const uint wm = 64;
-    const uint wniter = 2; // =1 answer is wrong
-    const uint tn = 4;
+    const uint wm = 32;
+    const uint wniter = 1; // =1 answer is wrong
+    const uint tn = 2;
     const uint tm = 4;
     const uint oniter = 2;
 
