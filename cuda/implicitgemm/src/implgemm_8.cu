@@ -94,7 +94,7 @@ __global__ void implgemm(param_t param)
     // int posh_ori = fastdiv(bx * BM + tx / 2, param.OW_fastdiv) * param.u - param.p;
     // int posw_ori = fastmodulo(bx * BM + tx / 2, param.OW_fastdiv) * param.v - param.q;
 
-    
+
     // int inOffset = (ksplit > 0):  z * param.c * param.h * param.w ;
     // int weiOffset = (by * BN + tx / 8 * 4) * param.c * param.r * param.s;
     int inChannelOffset = layout == 0 ? param.c * param.w : param.h * param.w;
@@ -121,8 +121,6 @@ __global__ void implgemm(param_t param)
     float weight_frag[2][WNITER * TN] = {0.f};
     float input_frag[2][WMITER * TM] = {0.f};
     float output_frag[WMITER * TM * WNITER * TN] = {0.f};
-    float weight_ldg_frag[4];
-    float input_ldg_frag[4];
 
 // #pragma unroll
 //     for (int i = 0; i < 8; ++i)
@@ -142,6 +140,10 @@ __global__ void implgemm(param_t param)
     // const uint innerRowB = tx / (BN / 4);
     // const uint innerColB = tx % (BN / 4);
     // constexpr uint rowStrideB = NUM_THREADS / (BN / 4);
+
+    float weight_ldg_frag[BN/rowStrideA][4];
+    float input_ldg_frag[BM/rowStrideA][4];
+
 
 // ldg
     const uint weight_sts_addr = innerRowA + innerColA * (BN+PAD) * 4;
@@ -262,24 +264,24 @@ __global__ void implgemm(param_t param)
 
     __syncthreads();
 
-    if(tx == 0 && bx == 5 && by == 0 && z == 0){
-        for(int i=0; i < BM; ++i)
-            printf("%.2f,",  smeminput[i]);
-        printf("\n");
+    // if(tx == 0 && bx == 5 && by == 0 && z == 0){
+    //     for(int i=0; i < BM; ++i)
+    //         printf("%.2f,",  smeminput[i]);
+    //     printf("\n");
         // for(int i=128; i < 256; ++i)
         //     printf("%.2f,",  smeminput[i]);
         // printf("\n");
-    }
+    // }
 
-    if(tx == 0 && bx == 5 && by == 0 && z == 0){
+    // if(tx == 0 && bx == 5 && by == 0 && z == 0){
         // printf("%u, %u, %u, %u \n",  innerRowA, innerColA, rowStrideA, weight_sts_addr);
-        for(int i=0; i < BN; ++i)
-            printf("%f,",  smemweight[i]);
-        printf("\n");
+        // for(int i=0; i < BN; ++i)
+        //     printf("%.2f,",  smemweight[i]);
+        // printf("\n");
         // for(int i=0; i < 16; ++i)
         //     printf("%f,",  param.weight[i*param.c*param.r*param.s]);
         // printf("\n");
-    }
+    // }
 
     // lds
     // int input_lds_addr = (warp_id % 2) * 64 + mma_tid_x * 4;
@@ -324,32 +326,34 @@ __global__ void implgemm(param_t param)
         // ldg
 #pragma unroll
         for (uint offset = 0; offset + rowStrideA <= BN; offset += rowStrideA) {
+            uint i_ldg = offset / rowStrideA;
             if(vec_load_b){
                 if (by * BN  + innerRowA + offset < param.k &&  innerColA * 4 + crs + BK < end_k){
                     float4 tmp = reinterpret_cast<float4 *>(&param.weight[(by * BN + innerRowA + offset) * weightKOffset + innerColA * 4 + crs + BK])[0];
-                    weight_ldg_frag[0] = tmp.x;
-                    weight_ldg_frag[1] = tmp.y;
-                    weight_ldg_frag[2] = tmp.z;
-                    weight_ldg_frag[3] = tmp.w;
+                    weight_ldg_frag[i_ldg][0] = tmp.x;
+                    weight_ldg_frag[i_ldg][1] = tmp.y;
+                    weight_ldg_frag[i_ldg][2] = tmp.z;
+                    weight_ldg_frag[i_ldg][3] = tmp.w;
                 } else {
                     #pragma unroll
                     for (int i = 0; i < 4; ++i)
-                        weight_ldg_frag[i] = 0.f;
+                        weight_ldg_frag[i_ldg][i] = 0.f;
                 }
             }else{
                 #pragma unroll
                 for (int i = 0; i < 4; ++i){
                     if (by * BN  + innerRowA + offset < param.k &&  innerColA * 4 + crs + BK + i < end_k){
                         // float4 tmp = reinterpret_cast<float4 *>(&param.weight[(by * BN + innerRowA + offset) * weightKOffset + innerColA * 4 + crs + BK + i])[0];
-                        weight_ldg_frag[i] = param.weight[(by * BN + innerRowA + offset) * weightKOffset + innerColA * 4 + crs + BK + i];
+                        weight_ldg_frag[i_ldg][i] = param.weight[(by * BN + innerRowA + offset) * weightKOffset + innerColA * 4 + crs + BK + i];
                     } else {
-                        weight_ldg_frag[i] = 0.f;
+                        weight_ldg_frag[i_ldg][i] = 0.f;
                     }
                 }
             }
         }
 #pragma unroll
         for (uint offset = 0; offset + rowStrideA <= BM; offset += rowStrideA) {
+            uint i_ldg = offset / rowStrideA;
             int n = (ksplit > 0) ? (bx * BM + innerRowA + offset) / PQ : z;
             const unsigned int npq_res = (bx * BM + innerRowA + offset) % PQ;
             const int posh_ori = fastdiv((ksplit > 0) ? npq_res: bx * BM + innerRowA + offset, param.OW_fastdiv) * param.u - param.p;
@@ -378,14 +382,14 @@ __global__ void implgemm(param_t param)
                                 curH * inChannelOffset + curW * param.c + curC:
                                 curC * inChannelOffset + curH * param.w + curW;
                     float4 tmp = reinterpret_cast<float4 *>(&param.input[inOffset + inOffsetTmp])[0];
-                    input_ldg_frag[0] = tmp.x;
-                    input_ldg_frag[1] = tmp.y;
-                    input_ldg_frag[2] = tmp.z;
-                    input_ldg_frag[3] = tmp.w;
+                    input_ldg_frag[i_ldg][0] = tmp.x;
+                    input_ldg_frag[i_ldg][1] = tmp.y;
+                    input_ldg_frag[i_ldg][2] = tmp.z;
+                    input_ldg_frag[i_ldg][3] = tmp.w;
                 } else {
     #pragma unroll
                     for (int i = 0; i < 4; ++i)
-                        input_ldg_frag[i] = 0.f;
+                        input_ldg_frag[i_ldg][i] = 0.f;
                 }
             } else {
                 #pragma unroll
@@ -411,9 +415,9 @@ __global__ void implgemm(param_t param)
                         int inOffsetTmp = layout == 0 ? 
                                 curH * inChannelOffset + curW * param.c + curC:
                                 curC * inChannelOffset + curH * param.w + curW;
-                        input_ldg_frag[i] = param.input[inOffset + inOffsetTmp];
+                        input_ldg_frag[i_ldg][i] = param.input[inOffset + inOffsetTmp];
                     } else {
-                        input_ldg_frag[i] = 0.f;
+                        input_ldg_frag[i_ldg][i] = 0.f;
                     }
                 }
             }
@@ -515,8 +519,8 @@ __global__ void implgemm(param_t param)
                                         (wSubColIdx * TN) + resIdxN] +=
                                 input_frag[subcrs % 2][wSubRowIdx * TM + resIdxM] *
                                 weight_frag[subcrs % 2][wSubColIdx * TN + resIdxN];
-                            // if(tx == 0 && bx == 0 && by == 0 && z == 0){
-                            //     printf("subcrs:%d, i:%d, j:%d, %f * %f = %f, acc = %f\n", subcrs, wSubRowIdx * TM + resIdxM, wSubColIdx * TN + resIdxN,
+                            // if(tx == 0 && bx == 5 && by == 0 && z == 0){
+                            //     printf("crs:%d, subcrs:%d, i:%d, j:%d, %f * %f = %f, acc = %f\n", crs, subcrs, wSubRowIdx * TM + resIdxM, wSubColIdx * TN + resIdxN,
                             //         input_frag[subcrs % 2][wSubRowIdx * TM + resIdxM],
                             //         weight_frag[subcrs % 2][wSubColIdx * TN + resIdxN],
                             //         input_frag[subcrs % 2][wSubRowIdx * TM + resIdxM] *
@@ -532,16 +536,18 @@ __global__ void implgemm(param_t param)
         // ldg
 #pragma unroll
         for (uint offset = 0; offset + rowStrideA <= BN; offset += rowStrideA) {
+            uint i_ldg = offset / rowStrideA;
 #pragma unroll
             for (int i = 0; i < 4; ++i){
-                smemweight[write_flag * (BN+PAD) * BK + weight_sts_addr + offset + i*(BN+PAD)] = weight_ldg_frag[i];
+                smemweight[write_flag * (BN+PAD) * BK + weight_sts_addr + offset + i*(BN+PAD)] = weight_ldg_frag[i_ldg][i];
             }
         }
 #pragma unroll
         for (uint offset = 0; offset + rowStrideA <= BM; offset += rowStrideA) {
+            uint i_ldg = offset / rowStrideA;
 #pragma unroll
             for (int i = 0; i < 4; ++i){
-                smeminput[write_flag * (BM+PAD) * BK + input_sts_addr + offset + i*(BM+PAD)] = input_ldg_frag[i];
+                smeminput[write_flag * (BM+PAD) * BK + input_sts_addr + offset + i*(BM+PAD)] = input_ldg_frag[i_ldg][i];
             }
         }
         // sts
@@ -607,11 +613,11 @@ __global__ void implgemm(param_t param)
 //         }
     }
 
-    // if(tx == 59 && bx == 0 && by == 0 && z == 0){
+    // if(tx == 1 && bx == 5 && by == 0 && z == 0){
     //     for (int i = 0; i < WMITER * TM * WNITER * TN; ++i){
     //         printf("%f,",  output_frag[i]);
-    //         if((i+1) % (WNITER * TN) == 0)
-    //             printf("\n");
+            // if((i+1) % (WNITER * TN) == 0)
+                // printf("]\n");
     //     }
     //     printf("\n");
     // }
@@ -764,16 +770,16 @@ cudaError_t launch_implgemm(param_t param)
     int outh = (h - r + 2 * p) / u + 1;
     int outw = (w - s + 2 * q) / v + 1;    
 
-    const uint bm = 64;
-    const uint bn = 32;
+    const uint bm = 128;
+    const uint bn = 128;
     const uint bk = 8;
 
-    const uint NUM_THREADS = 64;
+    const uint NUM_THREADS = 256;
     
     const uint wn = 32;
-    const uint wm = 32;
-    const uint wniter = 1; // =1 answer is wrong
-    const uint tn = 2;
+    const uint wm = 64;
+    const uint wniter = 2; // =1 answer is wrong
+    const uint tn = 4;
     const uint tm = 4;
     const uint oniter = 2;
 
