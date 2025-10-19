@@ -108,7 +108,8 @@ __global__ void implgemm(param_t param)
 
     constexpr unsigned int SWIZZLE_BITS_B = int_log2(BN) + 2;
     constexpr unsigned int SWIZZLE_BITS_B_SHIFT = SWIZZLE_BITS_B - int_log2(WARPSIZE/(BK/4));
-    constexpr unsigned int SWIZZLE_MASK_B = 1u << SWIZZLE_BITS_B;
+    // constexpr unsigned int SWIZZLE_MASK_B = 1u << SWIZZLE_BITS_B;
+    constexpr unsigned int SWIZZLE_MASK_B =  ((1u << (BK/4-1)) - 1) << SWIZZLE_BITS_B;
 
     constexpr unsigned int SWIZZLE_BITS_C_SHIFT = int_log2(TN*WSUBM);
     constexpr unsigned int SWIZZLE_MASK_C = ((1u << int_log2(WSUBN/TN)) - 1) << SWIZZLE_BITS_C_SHIFT;
