@@ -466,12 +466,13 @@ __global__ void implgemm(param_t param)
 //                 weight_frag[(subcrs + 1) % 2][i] = smemweight[load_flag * (BN+4) * 8 + weight_lds_addr + (subcrs + 1) * (BN+4) + i];
 //                 weight_frag[(subcrs + 1) % 2][i + 4] = smemweight[load_flag * (BN+4) * 8 + weight_lds_addr + (subcrs + 1) * (BN+4) + i + 16];
 //             }
+            const float *smemweight_tile = smemweight + load_flag * (BN + PAD) * BK + (subcrs + 1) * (BN+PAD)
+                               + weight_lds_addr + threadColInWarp * TN;
 #pragma unroll
             for (uint wSubColIdx = 0; wSubColIdx < WNITER; ++wSubColIdx)
 #pragma unroll
                 for (uint i = 0; i < TN; ++i)
-                    weight_frag[(subcrs + 1) % 2][wSubColIdx * TN + i] = smemweight[load_flag * (BN+PAD) * BK +
-                        (subcrs + 1) * (BN+PAD) + weight_lds_addr + wSubColIdx * WSUBN + threadColInWarp * TN + i];
+                    weight_frag[(subcrs + 1) % 2][wSubColIdx * TN + i] = smemweight_tile[wSubColIdx * WSUBN + i];
             // float* base_ptr = smemweight + load_flag * 132 * 8 + weight_lds_addr + (subcrs + 1) * 132;
 
             // // first 4 values -> weight_frag[...][0..3]
@@ -489,12 +490,13 @@ __global__ void implgemm(param_t param)
 //                 input_frag[(subcrs + 1) % 2][i] = smeminput[load_flag * BM * 8 + input_lds_addr + (subcrs + 1) * BM + i];
 //                 input_frag[(subcrs + 1) % 2][i + 4] = smeminput[load_flag * BM * 8 + input_lds_addr + (subcrs + 1) * BM + i + 32];
 //             }
+            const float *smeminput_tile = smeminput + load_flag * (BM + PAD) * BK + (subcrs + 1) * (BM+PAD)
+                               + input_lds_addr + threadRowInWarp * TM;
 #pragma unroll
             for (uint wSubRowIdx = 0; wSubRowIdx < WMITER; ++wSubRowIdx)
 #pragma unroll
                 for (uint i = 0; i < TM; ++i)
-                    input_frag[(subcrs + 1) % 2][wSubRowIdx * TM + i] = smeminput[load_flag * (BM+PAD) * BK +
-                        (subcrs + 1) * (BM+PAD) + input_lds_addr + wSubRowIdx * WSUBM + threadRowInWarp * TM + i];
+                    input_frag[(subcrs + 1) % 2][wSubRowIdx * TM + i] = smeminput_tile[wSubRowIdx * WSUBM + i];
 
 // #pragma unroll
 //             for (int i = 0; i < 8; ++i)
